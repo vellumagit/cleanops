@@ -1,6 +1,9 @@
 import Link from "next/link";
 import {
   Award,
+  Bell,
+  BellRing,
+  Clock,
   Banknote,
   Lightbulb,
   ChevronRight,
@@ -16,7 +19,6 @@ import {
   Repeat,
   ScrollText,
   Shield,
-  Sliders,
   Sparkles,
   User,
   Users,
@@ -30,12 +32,6 @@ import { PwaInstallCard } from "@/components/pwa-install-button";
 
 export const metadata = { title: "Settings" };
 
-/**
- * Settings grouped into thematic sections so owners can find what
- * they need without scanning 16 rows. Order inside each group goes
- * from most-often-touched at the top (what clients see / what
- * affects money) to infrequent admin tools at the bottom.
- */
 type Section = {
   title: string;
   description: string;
@@ -47,30 +43,25 @@ type Section = {
   }>;
 };
 
+/**
+ * Grouped by what you're trying to change, not by how the code is built.
+ * Until 2026-11-21 an "Automations" group held invoicing and payroll pages,
+ * the automation timings sat under Team, lead alerts under Integrations, and
+ * payment instructions under Business, a group away from card payments —
+ * Brian: settings "scattered all over seemingly randomly". Now every switch
+ * lives on the page about its subject, and each group answers one question.
+ */
 const SECTIONS: Section[] = [
   {
-    title: "Learn",
-    description: "The fast paths.",
+    title: "Your company",
+    description: "Who you are and how amounts, dates and services read everywhere.",
     items: [
       {
-        href: "/app/settings/tips",
-        icon: Lightbulb,
-        title: "Tips & shortcuts",
+        href: "/app/settings/email",
+        icon: Mail,
+        title: "Email & contact info",
         description:
-          "Every trick the app supports — type-to-jump dropdowns, batch billing, one-tap fixes — and the toggle for inline tips.",
-      },
-    ],
-  },
-  {
-    title: "Business",
-    description: "What shows up on invoices, emails, and public pages.",
-    items: [
-      {
-        href: "/app/settings/services",
-        icon: Sparkles,
-        title: "Services",
-        description:
-          "The list of services that show up when booking — rename the defaults, archive ones you don't offer, add your own.",
+          "The name your emails come from, and the contact email and phone clients see on invoices.",
       },
       {
         href: "/app/settings/branding",
@@ -80,18 +71,18 @@ const SECTIONS: Section[] = [
           "Logo + brand colour for invoices, booking confirmations, and public pages.",
       },
       {
-        href: "/app/settings/email",
-        icon: Mail,
-        title: "Email & contact info",
+        href: "/app/settings/services",
+        icon: Sparkles,
+        title: "Services",
         description:
-          "Sender email for outgoing mail + the contact email / phone shown to clients on invoices.",
+          "The list of services that show up when booking — rename the defaults, archive ones you don't offer, add your own.",
       },
       {
-        href: "/app/settings/sms",
-        icon: MessageSquare,
-        title: "SMS / Texting",
+        href: "/app/settings/timezone",
+        icon: Globe2,
+        title: "Timezone",
         description:
-          "Text booking confirmations and reminders to clients from your own dedicated number. Included in your plan up to a monthly limit.",
+          "Booking times and recurring schedules are read in this zone.",
       },
       {
         href: "/app/settings/currency",
@@ -100,32 +91,79 @@ const SECTIONS: Section[] = [
         description:
           "How amounts display, the default GST / VAT / sales tax, and which region's statutory holidays mark the scheduler.",
       },
+    ],
+  },
+  {
+    title: "Clients",
+    description: "What clients hear from you, and how new ones reach you.",
+    items: [
       {
-        href: "/app/settings/timezone",
-        icon: Globe2,
-        title: "Timezone",
+        href: "/app/settings/automations",
+        icon: Zap,
+        title: "Client messages",
         description:
-          "Your org's timezone. Booking times and recurrence schedules are interpreted in this zone.",
+          "Confirmations, reminders, invoice chasers and review asks, in the order a job happens — plus who receives them. The automations master switch is here.",
+      },
+      {
+        href: "/app/settings/sms",
+        icon: MessageSquare,
+        title: "SMS / Texting",
+        description:
+          "Text clients from your own number. Included in your plan up to a monthly limit.",
+      },
+      {
+        href: "/app/settings/intake-forms",
+        icon: Inbox,
+        title: "Website & lead forms",
+        description:
+          "Connect your website, social and hiring forms so inquiries land in Sollos, and choose how you're alerted to new leads.",
+      },
+    ],
+  },
+  {
+    title: "Money",
+    description: "Invoices going out and payments coming in.",
+    items: [
+      {
+        href: "/app/settings/invoicing",
+        icon: CreditCard,
+        title: "Invoicing",
+        description:
+          "Drafting invoices when jobs finish, sending them for you, the morning review, and auto-void.",
+      },
+      {
+        href: "/app/settings/recurring-invoices",
+        icon: Repeat,
+        title: "Recurring invoices",
+        description:
+          "Invoices on a schedule for clients on a retainer or contract.",
       },
       {
         href: "/app/settings/payment-methods",
         icon: Banknote,
-        title: "Payment instructions",
+        title: "Getting paid",
         description:
-          "Zelle, check, wire — what clients see on their invoice when online payment isn't set up.",
+          "Card payments, the payment instructions on every invoice (e-transfer, cheque, wire), and tips.",
       },
     ],
   },
   {
     title: "Team",
-    description: "Members, compensation, and thresholds.",
+    description: "Your people, their pay, and what Sollos tells them.",
     items: [
       {
         href: "/app/settings/members",
         icon: Users,
         title: "Team members",
         description:
-          "Invite, add manually, and manage roles + pay rates for everyone on your team.",
+          "Everyone on your team with their role and pay rate. Invite or add people from Employees.",
+      },
+      {
+        href: "/app/settings/payroll",
+        icon: Clock,
+        title: "Payroll & timesheets",
+        description:
+          "The pay-period calendar, forgotten clock-outs, overtime, and pay receipts.",
       },
       {
         href: "/app/settings/bonus-rules",
@@ -135,85 +173,44 @@ const SECTIONS: Section[] = [
           "Rating thresholds that earn employees a performance bonus.",
       },
       {
-        href: "/app/settings/thresholds",
-        icon: Sliders,
-        title: "Automation thresholds",
+        href: "/app/settings/team-alerts",
+        icon: BellRing,
+        title: "Team alerts & housekeeping",
         description:
-          "Tune timing on the hygiene crons: when to expire estimates, void invoices, archive records, and the overtime warning threshold.",
+          "Crew schedules, nudges to the office, digests, and the bookkeeping Sollos does for you — auto-complete, auto-expire, auto-archive.",
       },
     ],
   },
   {
-    title: "Automations",
-    description: "Background work that runs without you clicking.",
-    items: [
-      {
-        href: "/app/settings/automations",
-        icon: Zap,
-        title: "Client automations",
-        description:
-          "Every message a client can receive, in journey order — plus team alerts & housekeeping. Invoicing and payroll machinery live on their own pages below.",
-      },
-      {
-        href: "/app/settings/payroll",
-        icon: Banknote,
-        title: "Payroll & timesheets",
-        description:
-          "The pay-period calendar — drives Payroll's suggested periods, the morning autodraft, and the Timesheets view.",
-      },
-      {
-        href: "/app/settings/invoicing",
-        icon: CreditCard,
-        title: "Invoicing",
-        description:
-          "Auto-send drafted invoices after a review window (per-job + biweekly/monthly), with a hold / send-now escape hatch.",
-      },
-      {
-        href: "/app/settings/recurring-invoices",
-        icon: Repeat,
-        title: "Recurring invoices",
-        description:
-          "Auto-generate invoices on a schedule for contract clients on a retainer.",
-      },
-    ],
-  },
-  {
-    title: "Integrations",
-    description: "Connect Sollos to the rest of your stack.",
+    title: "Connections",
+    description: "Sollos and the rest of your tools.",
     items: [
       {
         href: "/app/settings/integrations",
         icon: Plug,
         title: "Integrations",
         description:
-          "Connect Stripe, Square, QuickBooks, Google Calendar — so clients can pay online and your books stay in sync.",
+          "Stripe, Square, QuickBooks, Sage, Google Calendar — card payments and books in sync.",
       },
       {
         href: "/app/settings/api-keys",
         icon: KeyRound,
         title: "API Keys",
         description:
-          "Generate keys for Make.com, Zapier, n8n, or custom integrations that need read / write access.",
+          "Keys for Make.com, Zapier, n8n, or custom integrations that need read / write access.",
       },
       {
         href: "/app/settings/webhooks",
         icon: Webhook,
-        title: "Webhooks (outbound)",
+        title: "Webhooks",
         description:
-          "POST real-time events to external systems when bookings, invoices, or reviews change.",
-      },
-      {
-        href: "/app/settings/intake-forms",
-        icon: Inbox,
-        title: "Intake forms (inbound)",
-        description:
-          "Get a webhook URL to paste into your hiring or lead forms — submissions land in Sollos automatically.",
+          "Send real-time events to other systems when bookings, invoices, or reviews change.",
       },
     ],
   },
   {
     title: "Account",
-    description: "Subscription, audit trail, and your data.",
+    description: "Your Sollos plan, the record of changes, and your data.",
     items: [
       {
         href: "/app/settings/billing",
@@ -227,28 +224,48 @@ const SECTIONS: Section[] = [
         icon: ScrollText,
         title: "Audit log",
         description:
-          "Append-only record of who created, updated, deleted, or paid what across your org.",
+          "Who created, updated, deleted, or paid what across your company.",
       },
       {
         href: "/app/settings/data",
         icon: Database,
         title: "Your data",
         description:
-          "Export everything your org owns. Schedule permanent deletion with a 30-day grace window.",
+          "Export everything your company owns. Schedule permanent deletion with a 30-day grace window.",
       },
+    ],
+  },
+  {
+    title: "You",
+    description: "Just your own login — nobody else's changes.",
+    items: [
       {
         href: "/app/profile",
         icon: User,
         title: "Your profile",
         description:
-          "Set your own name and phone — how you appear across Sollos (on bookings, the schedule, and to your team) instead of your email.",
+          "Your own name and phone — how you appear on bookings, the schedule, and to your team.",
       },
       {
         href: "/app/profile/security",
         icon: Shield,
-        title: "Security (your account)",
+        title: "Security",
         description:
-          "Enable multi-factor authentication on your own login. Optional but recommended for owners and admins.",
+          "Two-step sign-in on your own login. Recommended for owners and admins.",
+      },
+      {
+        href: "/app/notifications/choices",
+        icon: Bell,
+        title: "What alerts you",
+        description:
+          "Which notices buzz your phone and reach your email.",
+      },
+      {
+        href: "/app/settings/tips",
+        icon: Lightbulb,
+        title: "Tips & shortcuts",
+        description:
+          "Type-to-jump dropdowns, batch billing, one-tap fixes — and the switch for inline tips.",
       },
     ],
   },
@@ -259,7 +276,7 @@ export default async function SettingsPage() {
   return (
     <PageShell
       title="Settings"
-      description="Organization, members, billing, and integrations."
+      description="Grouped by what you're changing: your company, clients, money, your team, connections, and your account."
     >
       <PwaInstallCard />
 
@@ -272,16 +289,16 @@ export default async function SettingsPage() {
                 {section.description}
               </p>
             </div>
-            <ul className="space-y-2">
+            <ul className="grid gap-2 xl:grid-cols-2">
               {section.items.map((s) => {
                 const Icon = s.icon;
                 return (
                   <li key={s.href}>
                     <Link
                       href={s.href}
-                      className="flex items-center gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/50"
+                      className="flex h-full items-center gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/50"
                     >
-                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
                         <Icon className="h-5 w-5" />
                       </div>
                       <div className="flex min-w-0 flex-1 flex-col">

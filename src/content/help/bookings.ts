@@ -53,7 +53,7 @@ Prices live on bookings; wages live on people. What you charge the client never 
 
 **Duration is the job's full length** — how long it would take one person. When two or more people share the visit, you can show each of them their share:
 
-- If your company divides team hours (**Settings → Payroll → Payroll & timesheet automations**), every team job does, and the form says *Hours are divided evenly across the crew*.
+- If your company divides team hours (**Settings → Payroll & timesheets → Payroll & timesheet automations**), every team job does, and the form says *Hours are divided evenly across the crew*.
 - Otherwise each team booking has its own tick, **Divide the hours evenly across the crew**.
 
 Divided, a 4-hour job with 2 cleaners shows each of them about 2 hours in the field app. Their pay still comes from their own clock-in and clock-out, and the client's bill doesn't change. Sollos also uses the share when it checks for clashes and who is free — two cleaners on a divided 4-hour job are each treated as on site for 2 hours — and the booking confirmation email tells the client roughly when the crew will finish.
@@ -78,7 +78,7 @@ The crew's screen also has the address with **Open in Maps**, the client's phone
 
 ## Who gets told when you book
 
-- **The crew** — everyone on it gets a notification, if **Notify employee on booking assignment** is on in [Settings → Automations](/app/settings/automations). The job appears in their field app either way, and they can accept it there; the booking page shows each person as *Accepted* or *Awaiting response* under **Crew response**.
+- **The crew** — everyone on it gets a notification, if **Notify employee on booking assignment** is on in [Settings → Team alerts & housekeeping](/app/settings/team-alerts). The job appears in their field app either way, and they can accept it there; the booking page shows each person as *Accepted* or *Awaiting response* under **Crew response**.
 - **The client** — a booking confirmation by email and/or text, if **Booking confirmation email** / **Booking confirmation text** are on, and by the client's own channel preference. A **Pending** booking never sends one; the confirmation goes when you confirm it.
 - **Google Calendar** — the company calendar and each cleaner's connected calendar pick it up.
 
@@ -167,7 +167,7 @@ Deleting sends no message to the crew or the client. If the client or crew shoul
 
 ## Common questions
 
-**Why didn't my client get a confirmation?** The booking confirmation only goes out when **Booking confirmation email** or **text** is on in Settings → Automations, the client's channel preference allows it, and the booking isn't Pending. A Pending booking gets its confirmation when you change it to Confirmed.
+**Why didn't my client get a confirmation?** The booking confirmation only goes out when **Booking confirmation email** or **text** is on in Settings → Client messages, the client's channel preference allows it, and the booking isn't Pending. A Pending booking gets its confirmation when you change it to Confirmed.
 
 **How do I stop the client being told about a time change?** When the edit form asks, choose **Save without notifying**. A drag on the scheduler does notify (if the rescheduled automations are on), so use the form when you'd rather tell them yourself.
 

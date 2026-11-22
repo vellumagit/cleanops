@@ -1,76 +1,12 @@
-import Link from "next/link";
-import { ArrowLeft, Sliders } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { PageShell } from "@/components/page-shell";
-import { buttonVariants } from "@/components/ui/button";
-import { resolveAutomationEnabled } from "@/lib/automation-defaults";
-import { ThresholdsForm } from "./form";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Automation thresholds" };
-
-export default async function ThresholdsPage() {
-  const membership = await requireMembership(["owner", "admin"]);
-  const admin = createSupabaseAdminClient();
-
-  const { data } = (await admin
-    .from("organizations")
-    .select(
-      `stale_estimate_expire_days,
-       invoice_void_days,
-       booking_auto_complete_hours,
-       archive_after_days,
-       overtime_threshold_hours,
-       automation_settings`,
-    )
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: {
-      stale_estimate_expire_days: number | null;
-      invoice_void_days: number | null;
-      booking_auto_complete_hours: number | null;
-      archive_after_days: number | null;
-      overtime_threshold_hours: number | null;
-      automation_settings: Record<string, { enabled?: boolean } | undefined> | null;
-    } | null;
-  };
-
-  return (
-    <PageShell
-      title="Automation thresholds"
-      description="Tune the timing on system-level automations. Blank a field to disable that automation for your organization."
-      actions={
-        <Link
-          href="/app/settings"
-          className={buttonVariants({ variant: "outline", size: "sm" })}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
-      }
-    >
-      <div className="mb-4 flex items-start gap-3 rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm">
-        <Sliders className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
-        <p className="text-muted-foreground">
-          These values drive the nightly hygiene crons. Most organizations can
-          leave them at their defaults. Leave a field blank to disable its
-          matching automation for your org specifically — the other orgs on
-          Sollos are unaffected.
-        </p>
-      </div>
-      <ThresholdsForm
-        autoVoidOn={resolveAutomationEnabled(
-          data?.automation_settings ?? null,
-          "auto_void_overdue_invoices",
-        )}
-        defaults={{
-          stale_estimate_expire_days: data?.stale_estimate_expire_days ?? null,
-          invoice_void_days: data?.invoice_void_days ?? null,
-          booking_auto_complete_hours: data?.booking_auto_complete_hours ?? null,
-          archive_after_days: data?.archive_after_days ?? null,
-          overtime_threshold_hours: data?.overtime_threshold_hours ?? 40,
-        }}
-      />
-    </PageShell>
-  );
+/**
+ * The old "Automation thresholds" page. Its five timing settings now sit
+ * beside the switches they time (2026-11-21): estimate expiry, auto-complete
+ * and auto-archive on Team alerts & housekeeping, auto-void on Invoicing,
+ * overtime on Payroll & timesheets. Kept as a redirect rather than deleted —
+ * the address has been live and is in people's bookmarks.
+ */
+export default function LegacyThresholdsRedirect() {
+  redirect("/app/settings/team-alerts");
 }

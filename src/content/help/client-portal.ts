@@ -105,7 +105,7 @@ A client can send five requests an hour.
 
 **My invoices** lists invoices you've sent, with the amount, number, date, due date, and status. Drafts are never shown, so a client doesn't see a bill before you've reviewed it. Invoices still owing (sent, overdue, or partly paid) have a **Pay now** button. Paid invoices have a link to view them.
 
-**Pay now** opens the invoice's own page. If you've connected Stripe or Square, the client sees **Pay with card**. If not, they see your payment instructions from [Settings → Payment instructions](/app/settings/payment-methods). A card payment is recorded against the invoice automatically. See [Getting paid](help:getting-paid).
+**Pay now** opens the invoice's own page. If you've connected Stripe or Square, the client sees **Pay with card**. If not, they see your payment instructions from [Settings → Getting paid](/app/settings/payment-methods). A card payment is recorded against the invoice automatically. See [Getting paid](help:getting-paid).
 
 ## The phone works too
 

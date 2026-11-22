@@ -135,7 +135,7 @@ export function InvoicingForm(props: InvoicingFormProps) {
         label="Send time"
         htmlFor="send_hour"
         error={state.errors?.hour}
-        hint="Local time, the day after the job. Edit or hold any draft before then — whatever it says at send time is what ships. Tip: turn on the “Morning invoice review” digest in Settings → Automations to get the day's outgoing invoices in your inbox each morning, hours before they go."
+        hint="Local time, the day after the job. Edit or hold any draft before then — whatever it says at send time is what ships. Tip: turn on the “Morning invoice review” digest further down this page to get the day's outgoing invoices in your inbox each morning, hours before they go."
       >
         <select
           id="send_hour"

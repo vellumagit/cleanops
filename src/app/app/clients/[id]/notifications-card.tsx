@@ -161,12 +161,12 @@ export function ClientNotificationsCard({
       )}
 
       <p className="mt-3 text-[11px] text-muted-foreground">
-        Client automations and the per-client manager live in{" "}
+        Client messages and the per-client manager live in{" "}
         <Link
           href="/app/settings/automations"
           className="underline underline-offset-2 hover:text-foreground"
         >
-          Settings → Automations
+          Settings → Client messages
         </Link>
         . This card is what this client actually gets.
       </p>

@@ -8,8 +8,6 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { InvoicingForm } from "./invoicing-form";
-import { TippingForm } from "./tipping-form";
-import { parseTippingSettings } from "@/lib/tip-split";
 
 export const metadata = { title: "Invoicing" };
 
@@ -27,38 +25,16 @@ export default async function InvoicingSettingsPage() {
   // and the org's five — not the viewer's laptop.
   const tz = await getOrgTimezone(membership.organization_id);
 
-  // Two queries, deliberately. tipping_settings is a newer column, and
-  // PostgREST fails the WHOLE select if any one column is unknown — folding it
-  // into the query above would mean a schema-cache hiccup renders auto-send as
-  // OFF with no error shown, which is precisely the "my setting didn't save"
-  // report this file already carries scar tissue for.
-  const [{ data }, { data: tipData }] = await Promise.all([
-    admin
-      .from("organizations")
-      .select(
-        "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated, invoice_auto_send_mode, invoice_auto_send_delay_hours, invoice_auto_send_weekday",
-      )
-      .eq("id", membership.organization_id)
-      .maybeSingle(),
-    (async () => {
-      try {
-        return (await admin
-          .from("organizations")
-          .select("tipping_settings, stripe_account_id, stripe_charges_enabled")
-          .eq("id", membership.organization_id)
-          .maybeSingle()) as unknown as {
-          data: {
-            tipping_settings: unknown;
-            stripe_account_id: string | null;
-            stripe_charges_enabled: boolean | null;
-          } | null;
-        };
-      } catch {
-        // Tipping section degrades to "off"; auto-send above is untouched.
-        return { data: null };
-      }
-    })(),
-  ]);
+  // Card tips used to be configured here too; they moved to Settings →
+  // Getting paid on 2026-11-21, beside the tip wording that shares their
+  // column.
+  const { data } = await admin
+    .from("organizations")
+    .select(
+      "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated, invoice_auto_send_mode, invoice_auto_send_delay_hours, invoice_auto_send_weekday",
+    )
+    .eq("id", membership.organization_id)
+    .maybeSingle();
 
   const org = data as {
     invoice_auto_send_enabled: boolean;
@@ -69,12 +45,10 @@ export default async function InvoicingSettingsPage() {
     invoice_auto_send_weekday: number | null;
   } | null;
 
-  const tipping = parseTippingSettings(tipData?.tipping_settings);
-
   return (
     <PageShell
       title="Invoicing"
-      description="Automatic invoice sending and review window."
+      description="When invoices are drafted and sent, the morning review, and auto-void."
       actions={
         <Link
           href="/app/settings"
@@ -88,10 +62,11 @@ export default async function InvoicingSettingsPage() {
       <section>
         <h2 className="text-sm font-semibold">Auto-send</h2>
         <p className="mb-4 mt-0.5 text-xs text-muted-foreground">
-          Invoices are always drafted automatically when a job completes. Turn
-          this on to also send them at a set time the next day — with a hold /
+          Sends drafted invoices for you at a set time — with a hold /
           send-now escape hatch on every draft, and an optional morning digest
-          so you can review before anything goes out.
+          so you can review before anything goes out. Drafting itself is the{" "}
+          <strong>Auto-draft invoice on job complete</strong> switch below;
+          without it, auto-send only sends drafts you make yourself.
         </p>
         <InvoicingForm
           enabled={Boolean(org?.invoice_auto_send_enabled)}
@@ -106,22 +81,13 @@ export default async function InvoicingSettingsPage() {
         />
       </section>
 
-      <section className="mt-10 border-t border-border pt-8">
-        <h2 className="text-sm font-semibold">Tips</h2>
-        <p className="mb-4 mt-0.5 text-xs text-muted-foreground">
-          Stripe has no tipping for invoice links &mdash; its built-in tipping
-          is for in-person card readers &mdash; so this is ours. When it&rsquo;s
-          on, clients paying by card can add a tip, and we record who it&rsquo;s
-          owed to so you can pay it out. Off by default.
-        </p>
-        <TippingForm
-          enabled={tipping.enabled}
-          presets={tipping.presets}
-          stripeConnected={Boolean(
-            tipData?.stripe_account_id && tipData?.stripe_charges_enabled,
-          )}
-        />
-      </section>
+      <p className="mt-8 text-xs text-muted-foreground">
+        Looking for card tips? They&apos;re on{" "}
+        <Link href="/app/settings/payment-methods" className="underline underline-offset-2">
+          Getting paid
+        </Link>
+        , with the tip wording clients see on the invoice.
+      </p>
 
       <section className="mt-10 border-t border-border pt-8">
         <SatelliteAutomations

@@ -36,7 +36,7 @@ Email is off by default, so the team doesn't get mailed about every shift swap. 
 
 The feed is a page of team updates: news, wins, reminders, with an optional photo. It's **off** until you turn it on. While it's off, the Feed link is hidden in both the office and the field app, and the page won't open.
 
-**To turn it on or off:** go to [Settings → Automations](/app/settings/automations) and switch **Show team feed**. See [Automations](help:automations) for that page.
+**To turn it on or off:** go to [Settings → Team alerts & housekeeping](/app/settings/team-alerts) and switch **Show team feed**. See [Automations](help:automations) for that page.
 
 With the feed on:
 
@@ -67,7 +67,7 @@ When someone sends a message, everyone else in that conversation who has push no
 
 **My announcement went out, but half the team says they never saw it.** Push only reaches phones where notifications were turned on. The Announce page shows how many devices have it. For anything important, tick **Also email it to everyone**.
 
-**Where is the Feed? I can't find it in the menu.** The feed is off by default. Turn it on with **Show team feed** in **Settings → Automations**, and the Feed link appears in the office and the field app.
+**Where is the Feed? I can't find it in the menu.** The feed is off by default. Turn it on with **Show team feed** in **Settings → Team alerts & housekeeping**, and the Feed link appears in the office and the field app.
 
 **Can cleaners post to the feed?** No. Only owners, admins and managers can post. Everyone can read it, and anyone can talk back in **Chat**.
 

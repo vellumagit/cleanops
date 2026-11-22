@@ -89,7 +89,7 @@ The pencil edits a property. The archive icon takes it out of the booking form. 
 
 The **Notifications** control on the client form decides which automatic messages this client gets and how. There are three choices:
 
-- **Follow default**: uses your company setting from **Settings → Client automations → Default client notifications** (email only, text only, email and text, or none).
+- **Follow default**: uses your company setting from **Settings → Client messages → Default client notifications** (email only, text only, email and text, or none).
 - **Custom**: pick **Off**, **Email**, **Text**, or **Both** for each type of message: **Booking updates** (confirmations, reminders, changes), **Billing** (invoices, receipts, overdue notices), and **Reviews & rebooking** (follow-ups).
 - **Do not contact**: no automatic messages of any kind. You can still email or text them yourself.
 

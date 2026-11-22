@@ -6603,7 +6603,7 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
           data.length === 1
             ? "1 unpaid invoice was voided automatically"
             : `${data.length} unpaid invoices were voided automatically`,
-        body: `${list}${data.length > 6 ? ` and ${data.length - 6} more` : ""}. Unpaid more than ${days} days past due. Turn this off in Settings → Automations.`,
+        body: `${list}${data.length > 6 ? ` and ${data.length - 6} more` : ""}. Unpaid more than ${days} days past due. Turn this off in Settings → Invoicing.`,
         href: "/app/invoices",
         channels: { email: true },
         fact: `auto_void:${data.map((inv) => inv.id).sort().join(",")}`,

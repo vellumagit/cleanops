@@ -75,7 +75,7 @@ Every text carries the STOP wording, and replies are handled automatically:
 Turning texting on doesn't send anything by itself. Each text is a switch in [Automations](help:automations), all off until you turn them on:
 
 - **To clients** (opted-in only): **Booking confirmation text**, **24-hour booking reminder text** (sent alongside the email reminder), **Booking rescheduled text** and **Booking cancelled text** (for opted-in clients these replace the email — one notice, not both). Invoice, overdue-reminder and receipt messages can go by text too, when that client's billing messages are set to text.
-- **To your team**: **Job assignment text to employee**, the owner text when a forgotten clock-out gets capped, and **Text me when a lead comes in** on **Settings → Intake forms**.
+- **To your team**: **Job assignment text to employee**, the owner text when a forgotten clock-out gets capped, and **Text me when a lead comes in** on **Settings → Website & lead forms**.
 - **Sent when you press the button**: the opt-in request above and shift offers to your subcontractors and on-call pool ([Shift offers](help:shift-offers)). These work whatever the automation switches say, as long as texting is on.
 
 Whether a client gets email, text or both is decided per client — see [who actually receives a client message](help:automations#who-actually-receives-a-client-message). Review asks and rebooking nudges are email-only.

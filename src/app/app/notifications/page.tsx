@@ -70,7 +70,7 @@ export default async function NotificationsPage() {
       actions={
         canManage ? (
           <Link
-            href="/app/settings/automations"
+            href="/app/settings/team-alerts"
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -94,10 +94,10 @@ export default async function NotificationsPage() {
               {" "}
               What the company sends at all is in{" "}
               <Link
-                href="/app/settings/automations"
+                href="/app/settings/team-alerts"
                 className="font-medium text-foreground underline underline-offset-2"
               >
-                Settings → Automations
+                Settings → Team alerts & housekeeping
               </Link>
               .
             </>

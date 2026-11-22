@@ -232,7 +232,7 @@ export async function applyAutomationPresetAction(formData: FormData) {
   );
   if (!saved.ok) console.error("[automations] preset not saved:", saved.error);
 
-  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app/settings", "layout");
   revalidatePath("/app", "layout");
 }
 
@@ -297,7 +297,7 @@ export async function setClientNotificationPrefsAction(formData: FormData) {
     .eq("id", clientId)
     .eq("organization_id", membership.organization_id);
 
-  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app/settings", "layout");
   revalidatePath(`/app/clients/${clientId}`, "page");
   revalidatePath("/app/clients", "page");
 }
@@ -318,7 +318,7 @@ export async function toggleAutomationsMasterAction(formData: FormData) {
     .update({ automations_enabled: enabled } as never)
     .eq("id", membership.organization_id);
 
-  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app/settings", "layout");
   revalidatePath("/app", "layout");
 }
 
@@ -344,7 +344,7 @@ export async function setOrgContactDefaultAction(formData: FormData) {
     .update({ default_contact_preference: value } as never)
     .eq("id", membership.organization_id);
 
-  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app/settings", "layout");
 }
 
 export async function toggleAutomationAction(formData: FormData) {
@@ -390,7 +390,7 @@ export async function toggleAutomationAction(formData: FormData) {
     });
   }
 
-  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app/settings", "layout");
 }
 
 /**
@@ -433,7 +433,7 @@ export async function updateClockOutThresholdsAction(
   }));
   if (!saved.ok) return { ok: false, error: saved.error };
 
-  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app/settings", "layout");
   return { ok: true };
 }
 
@@ -465,5 +465,5 @@ export async function setAutomationFrequencyAction(formData: FormData) {
   }));
   if (!saved.ok) console.error(`[automations] ${key} frequency not saved:`, saved.error);
 
-  revalidatePath("/app/settings/automations");
+  revalidatePath("/app/settings", "layout");
 }

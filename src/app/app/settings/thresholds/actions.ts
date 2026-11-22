@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { THRESHOLD_FIELDS, type ThresholdField } from "./threshold-fields";
 
 export type ThresholdsState = {
   ok?: boolean;
@@ -38,51 +39,44 @@ function parseRequiredInt(
   return n;
 }
 
-export async function updateThresholdsAction(
+/**
+ * One timing setting at a time. The thresholds used to share a page of their
+ * own, filed under Team, far from the switches they time — so they now sit
+ * beside their automation (Brian, 2026-11-21: settings "scattered all over
+ * seemingly randomly"), each with its own small save. Same rules as the old
+ * all-in-one form: whole numbers, a floor per field, blank means "never" for
+ * the four that allow it (the crons read null as off), overtime required.
+ */
+export async function updateThresholdAction(
   _prev: ThresholdsState,
   formData: FormData,
 ): Promise<ThresholdsState> {
   const membership = await requireActionMembership(["owner", "admin"]);
+  const raw = String(formData.get("field") ?? "");
+  // The column name arrives from the form, so it must be one of the table's
+  // OWN keys — "toString" or "__proto__" resolve on any object.
+  if (!Object.hasOwn(THRESHOLD_FIELDS, raw)) return { error: "Unknown setting." };
+  const field = raw as ThresholdField;
+  const rule = THRESHOLD_FIELDS[field];
 
-  const staleDays = parseNullableInt(formData.get("stale_estimate_expire_days"), 1);
-  const voidDays = parseNullableInt(formData.get("invoice_void_days"), 30);
-  const completeHours = parseNullableInt(
-    formData.get("booking_auto_complete_hours"),
-    1,
-  );
-  const archiveDays = parseNullableInt(formData.get("archive_after_days"), 180);
-  const overtimeHours = parseRequiredInt(
-    formData.get("overtime_threshold_hours"),
-    1,
-  );
-
-  if (
-    staleDays === undefined ||
-    voidDays === undefined ||
-    completeHours === undefined ||
-    archiveDays === undefined ||
-    overtimeHours === undefined
-  ) {
+  const value = rule.nullable
+    ? parseNullableInt(formData.get("value"), rule.min)
+    : parseRequiredInt(formData.get("value"), rule.min);
+  if (value === undefined) {
     return {
-      error:
-        "One of the thresholds is invalid. Each must be a positive whole number, or blank to disable (except Overtime which requires a value).",
+      error: rule.nullable
+        ? `Enter a whole number of at least ${rule.min}, or leave it blank for never.`
+        : `Enter a whole number of at least ${rule.min}.`,
     };
   }
 
   const admin = createSupabaseAdminClient();
   const { error } = await admin
     .from("organizations")
-    .update({
-      stale_estimate_expire_days: staleDays,
-      invoice_void_days: voidDays,
-      booking_auto_complete_hours: completeHours,
-      archive_after_days: archiveDays,
-      overtime_threshold_hours: overtimeHours,
-    } as never)
+    .update({ [field]: value } as never)
     .eq("id", membership.organization_id);
-
   if (error) return { error: error.message };
 
-  revalidatePath("/app/settings/thresholds");
+  revalidatePath("/app/settings", "layout");
   return { ok: true };
 }

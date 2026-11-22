@@ -56,7 +56,7 @@ While the estimate is **Draft** or **Sent** and hasn't expired, the client sees 
 - **Declined**: it's marked **Declined**, with a matching notification.
 - **Expired**: after the link expires, the page tells the client to contact you for a new quote, and the buttons are gone.
 
-If you've turned on **Draft a booking when an estimate is approved** in **Settings → Client automations**, an approval (by the client, or by you setting the status) also creates a placeholder booking. It's **Pending**, set for tomorrow at 9 AM, unassigned, and linked to the estimate. You pick the real date, time, and cleaner. The client isn't told about the placeholder, and owners and admins get a notification to schedule it. If the client was a lead, the booking makes them a client.
+If you've turned on **Draft a booking when an estimate is approved** in **Settings → Client messages**, an approval (by the client, or by you setting the status) also creates a placeholder booking. It's **Pending**, set for tomorrow at 9 AM, unassigned, and linked to the estimate. You pick the real date, time, and cleaner. The client isn't told about the placeholder, and owners and admins get a notification to schedule it. If the client was a lead, the booking makes them a client.
 
 ## Turning it into a booking
 
@@ -68,7 +68,7 @@ On the estimate's page, press **Book this job**. A new booking opens with the cl
 
 ## Follow-ups and expiry
 
-Under **Winning the work** in **Settings → Client automations**, you can turn on:
+Under **Winning the work** in **Settings → Client messages**, you can turn on:
 
 - **Estimate follow-up**: 7 days after sending, if there's no answer, the client gets a "still interested?" email. A second "last chance" email goes out at 14 days.
 - **Stale-estimate alert to you**: owners and admins are told when an estimate has been **Sent** for 7 days or more with no answer.
@@ -84,7 +84,7 @@ Your website's estimate calculator creates a draft estimate for each request, wi
 
 The list shows each estimate's client (with their email and phone), summary, created and sent dates, status, and total. A red file icon means a PDF is attached. Search by client or summary. Click an estimate to open it.
 
-If you've set **Auto-archive records older than** in [Settings → Automation thresholds](/app/settings/thresholds), estimates that were approved, declined, or expired longer ago than that move out of the list. **Show archived** shows them.
+If **Auto-archive old records** is on in [Settings → Team alerts & housekeeping](/app/settings/team-alerts), estimates that were approved, declined, or expired longer ago than that move out of the list. **Show archived** shows them.
 
 ## Common questions
 

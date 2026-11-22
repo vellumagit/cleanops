@@ -20,7 +20,7 @@ Applicants and Hiring are for owners and admins only.
 
 Sollos doesn't host a job application page of its own. Applications come from a form on your website (or Typeform, Jotform, Zapier and the like) that sends to a Sollos intake address:
 
-1. Go to [Settings → Intake forms](/app/settings/intake-forms).
+1. Go to [Settings → Website & lead forms](/app/settings/intake-forms).
 2. Create a new intake form and set its type to **Job application**.
 3. Copy its URL and set it as the address your website's application form submits to.
 
@@ -70,7 +70,7 @@ Once an applicant is Hired or Rejected, the Hire button no longer appears. Their
 
 ## Common questions
 
-**Where do I get a link for people to apply?** Sollos doesn't host an application page. Create a **Job application** intake form under **Settings → Intake forms** and point your website's application form at its URL. Submissions then land on Applicants.
+**Where do I get a link for people to apply?** Sollos doesn't host an application page. Create a **Job application** intake form under **Settings → Website & lead forms** and point your website's application form at its URL. Submissions then land on Applicants.
 
 **An application came through but some answers are missing.** Fields Sollos doesn't recognise by name aren't dropped. Open the applicant and expand **Other form fields** at the bottom.
 

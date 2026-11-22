@@ -39,7 +39,7 @@ On a computer the sidebar runs top to bottom in the order work flows:
 
 At the bottom: **Help**, **Feedback**, **Notifications**, and **Settings**, then **Switch to Field View**, then a card with your name and role and a small sign-out button.
 
-Not everyone sees every entry. Managers never see Employees, Applicants, Hiring, Payroll, Reports, or Settings, and an owner can switch off further areas for a particular manager — see [Roles and permissions](help:roles-and-permissions). **Feed** appears only when the team feed is switched on (**Settings → Automations**, *Show team feed*).
+Not everyone sees every entry. Managers never see Employees, Applicants, Hiring, Payroll, Reports, or Settings, and an owner can switch off further areas for a particular manager — see [Roles and permissions](help:roles-and-permissions). **Feed** appears only when the team feed is switched on (**Settings → Team alerts & housekeeping**, *Show team feed*).
 
 The bell next to your company name opens Notifications; a red number on it is your unread count. Your logo and company name appear at the top once you've added a logo in **Settings → Branding** (until then it reads *Sollos 3*), and your brand colour tints the page you're on.
 
@@ -120,7 +120,7 @@ If your sign-in belongs to more than one company, Sollos opens the one you joine
 
 **Why does the sidebar say "Sollos 3" instead of my company name?** The company name shows once you've uploaded a logo in **Settings → Branding**.
 
-**Where did the Feed go?** It only shows when *Show team feed* is on in **Settings → Automations**. When it's off, the feed is hidden for everyone, in the office and the field app.
+**Where did the Feed go?** It only shows when *Show team feed* is on in **Settings → Team alerts & housekeeping**. When it's off, the feed is hidden for everyone, in the office and the field app.
 
 **How do I see what my cleaners see?** Tap **Switch to Field View** at the bottom of the sidebar (or **Field view** in the More sheet). It shows the field app for your own account — your own jobs and shifts.
 

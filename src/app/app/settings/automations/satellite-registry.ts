@@ -39,7 +39,7 @@ export const INTAKE_AUTOMATIONS: SatelliteAutomation[] = [
     key: "lead_alert_email",
     title: "Email me when a lead comes in",
     description:
-      "Every owner and admin, plus your organization's contact email (Settings → Organization), gets the website inquiry, estimate request or social/chat lead with the person's name, phone, email and what they asked. On by default and not paused by the master switch — a missed lead costs more than a stray email.",
+      "Every owner and admin, plus your organization's contact email (Settings → Email & contact info), gets the website inquiry, estimate request or social/chat lead with the person's name, phone, email and what they asked. On by default and not paused by the master switch — a missed lead costs more than a stray email.",
     trigger: "Website form → Sollos",
     defaultOn: true,
     ignoresMaster: true,
@@ -48,7 +48,7 @@ export const INTAKE_AUTOMATIONS: SatelliteAutomation[] = [
     key: "lead_alert_sms",
     title: "Text me when a lead comes in",
     description:
-      "The same news as a short text from your own number to every owner's and admin's profile phone plus your organization's contact phone. Needs SMS turned on (Settings → SMS) and counts against your included texts.",
+      "The same news as a short text from your own number to every owner's and admin's profile phone plus your organization's contact phone. Needs texting turned on (Settings → SMS / Texting) and counts against your included texts.",
     trigger: "Website form → Sollos",
   },
 ];
@@ -72,7 +72,7 @@ export const INVOICING_AUTOMATIONS: SatelliteAutomation[] = [
     key: "auto_void_overdue_invoices",
     title: "Auto-void long-overdue invoices",
     description:
-      "Off means Sollos never voids an invoice by itself. On, it voids unpaid invoices once they are this far past due (1 year unless you change it in Settings → Thresholds), logs each one and emails owners and admins. Also stops overdue reminders to that client.",
+      "Off means Sollos never voids an invoice by itself. On, it voids unpaid invoices once they are this far past due (1 year unless you change it just below), logs each one and emails owners and admins. Also stops overdue reminders to that client.",
     trigger: "Daily at 03:30 UTC",
   },
   {
@@ -106,7 +106,7 @@ export const PAYROLL_AUTOMATIONS: SatelliteAutomation[] = [
     key: "overtime_warning",
     title: "Overtime warning",
     description:
-      "Friday email to any employee whose week-to-date hours are within 20% of your overtime threshold (default 40h, configurable).",
+      "Friday email to any employee whose week-to-date hours are within 20% of the weekly hours set below (40 unless you change it).",
     trigger: "Fridays at 15:00 UTC",
   },
   {

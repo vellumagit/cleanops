@@ -10,7 +10,17 @@ export const article: HelpArticle = {
   body: `
 **Settings** (bottom of the sidebar) is where you set up the business itself: what you sell, how you look, how email reaches clients, money formats, and the clock everything runs on. Settings is for **owners and admins only** — managers and employees don't see it.
 
-The page groups everything into sections — **Learn**, **Business**, **Team**, **Automations**, **Integrations**, **Account** — ordered so the things clients see and the things that touch money sit near the top. This guide covers the business basics. The rest have their own guides: [Texting (SMS)](help:texting), [Automations](help:automations), [Integrations](help:integrations), [API keys, webhooks & intake forms](help:api-and-webhooks), and [Account & security](help:account-and-security). Payment instructions are in [Getting paid](help:getting-paid), team members in [Employees](help:employees), bonus rules in [Bonuses](help:bonuses).
+The page is grouped by what you're changing:
+
+- **Your company** — Email & contact info, Branding, Services, Timezone, and Currency, tax & holidays. This guide covers these.
+- **Clients** — Client messages, SMS / Texting, and Website & lead forms.
+- **Money** — Invoicing, Recurring invoices, and Getting paid.
+- **Team** — Team members, Payroll & timesheets, Bonus rules, and Team alerts & housekeeping.
+- **Connections** — Integrations, API Keys, and Webhooks.
+- **Account** — Billing, Audit log, and Your data.
+- **You** — your own profile, sign-in security, which alerts reach you, and Tips & shortcuts.
+
+Every automation switch sits on the page about its subject, with its timing right under it. The other groups have their own guides: [Texting (SMS)](help:texting), [Automations](help:automations), [Integrations](help:integrations), [API keys, webhooks & intake forms](help:api-and-webhooks), and [Account & security](help:account-and-security). Payment instructions are in [Getting paid](help:getting-paid), team members in [Employees](help:employees), bonus rules in [Bonuses](help:bonuses).
 
 On a phone, the top of Settings also has the card that installs Sollos on your home screen.
 

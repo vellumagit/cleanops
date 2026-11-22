@@ -68,7 +68,7 @@ A blue **Enable notifications** banner offers alerts for new jobs, messages and 
 
 ## The tabs along the bottom
 
-**Today**, **Shifts**, **Clock**, **Feed**, **Chat** and **Profile**. Chat shows a number when there are unread messages. Feed only appears when you've turned on **Show team feed** in **Settings → Client automations**. The header shows your logo, the cleaner's name, and **Sign out**.
+**Today**, **Shifts**, **Clock**, **Feed**, **Chat** and **Profile**. Chat shows a number when there are unread messages. Feed only appears when you've turned on **Show team feed** in **Settings → Client messages**. The header shows your logo, the cleaner's name, and **Sign out**.
 
 Tasks, training, hours, pay, availability and time off are all reached from **Profile**.
 
@@ -153,7 +153,7 @@ All three take the cleaner off this one visit and alert your owners, admins and 
 
 ## When someone is late
 
-Two automations watch for jobs nobody started. Both are off until you switch them on in **Settings → Client automations**.
+Two automations watch for jobs nobody started. Both are off until you switch them on in **Settings → Client messages**.
 
 - **Nobody clocked in yet** — 15 minutes after a job's start time, each confirmed cleaner who hasn't clocked in gets a notification: "You're not clocked in". On a crew with different arrival times, each person is measured from their own start. You aren't told at this point, since fifteen minutes late isn't news yet.
 - **Job finished with no clock-in** — 30 minutes after a job's whole window has passed with someone assigned and no clock-in, you get one alert, by notification and email. It comes before the job is completed and billed, so you can confirm or cancel it first.

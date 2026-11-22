@@ -1364,7 +1364,7 @@ export function weeklyOpsDigestEmail(args: {
       : ""}
     ${button("Open Dashboard", args.dashboardUrl)}
     <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      You can turn this weekly recap off in Settings → Automations.
+      You can turn this weekly recap off in Settings → Team alerts &amp; housekeeping.
     </p>
     `,
     {
@@ -1448,7 +1448,7 @@ export function monthlyOpsDigestEmail(args: {
 
     ${button("Open Dashboard", args.dashboardUrl)}
     <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      You can turn this monthly recap off in Settings → Automations.
+      You can turn this monthly recap off in Settings → Team alerts &amp; housekeeping.
     </p>
     `,
     {
@@ -2034,7 +2034,7 @@ export function invoiceReviewDigestEmail(args: {
     }
     <div style="margin-top:20px;">${button("Review invoices", args.invoicesUrl)}</div>
     <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      You can turn this morning digest off in Settings → Automations.
+      You can turn this morning digest off in Settings → Invoicing.
     </p>
     `,
     {

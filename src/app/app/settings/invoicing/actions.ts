@@ -27,8 +27,8 @@ export async function saveTippingAction(
     return { errors: { _form: "You don't have permission." } };
   }
 
-  // Read first, then merge. The public tipping wording is edited on a
-  // DIFFERENT screen (Settings › Payment instructions) but lives in this same
+  // Read first, then merge. The public tipping wording is edited by a
+  // DIFFERENT form (on the same Getting paid page) but lives in this same
   // JSONB column, so writing the object wholesale from here would silently
   // erase it. Merged onto what is there NOW (updateOrgSettingsColumn), so a
   // save on the other screen at the same moment isn't undone either.
@@ -53,7 +53,9 @@ export async function saveTippingAction(
     after: { tipping_settings: settings },
   });
 
-  revalidatePath("/app/settings/invoicing");
+  // The card-tip form now sits on Settings → Getting paid, beside the tip
+  // wording that shares this column.
+  revalidatePath("/app/settings/payment-methods");
   return { success: true };
 }
 

@@ -87,7 +87,7 @@ On the list, **Pause** stops a series and **Resume** starts it again from the ne
 
 ## Settings → Invoicing
 
-[Settings → Invoicing](/app/settings/invoicing) is for owners and admins. It holds auto-send, client tipping (see [Getting paid online](help:getting-paid)) and the invoicing automations. There's no setting for invoice numbers or payment terms: numbers are assigned automatically in order (INV-2026-0149 style), per-job and cycle drafts are due in 14 days, recurring invoices use the series' Net days, and hand-made invoices use whatever due date you pick.
+[Settings → Invoicing](/app/settings/invoicing) is for owners and admins. It holds auto-send and the invoicing automations, including auto-void and the number of days it waits. Card tips are on Settings → Getting paid (see [Getting paid online](help:getting-paid)). There's no setting for invoice numbers or payment terms: numbers are assigned automatically in order (INV-2026-0149 style), per-job and cycle drafts are due in 14 days, recurring invoices use the series' Net days, and hand-made invoices use whatever due date you pick.
 
 ### Auto-send
 
@@ -97,7 +97,7 @@ On the list, **Pause** stops a series and **Resume** starts it again from the ne
 - **Send invoices** (per-job drafts): **The day after the job**; **After a set number of hours**, with **Hold for** 24, 48 or 72 hours, after which it goes at the next send time; or **On one day each week**, with a **Send day**, when everything drafted since the last send goes together (a draft made less than an hour before the send time waits for the following week). The page repeats your choice as a sentence: *Invoices go out every Friday at 5:00 PM*.
 - **Also auto-send biweekly / monthly invoices**: when ticked, cycle invoices and recurring invoices are auto-sent too, always at the send time on the day after they're made. Untick it to review those by hand while per-job drafts still send.
 
-Auto-send never sends a $0 invoice. Drafts you make by hand, or with Generate invoice or Batch invoice, aren't scheduled as they're made. It follows each client's billing preference (email, a text with the pay link, or both) and skips clients set to **Do not contact**. If a client can't be reached at all, owners and admins get an email saying so. The main automations switch on Settings → Client automations has to be on as well: turning it off stops all auto-sending.
+Auto-send never sends a $0 invoice. Drafts you make by hand, or with Generate invoice or Batch invoice, aren't scheduled as they're made. It follows each client's billing preference (email, a text with the pay link, or both) and skips clients set to **Do not contact**. If a client can't be reached at all, owners and admins get an email saying so. The main automations switch on Settings → Client messages has to be on as well: turning it off stops all auto-sending.
 
 Turning auto-send **on** queues your waiting drafts for the next send time: every unscheduled draft from the last 7 days with an amount (including ones you made by hand), plus every held draft, including drafts you held yourself. The confirmation says how many and when. Turning it **off** holds everything that was queued.
 

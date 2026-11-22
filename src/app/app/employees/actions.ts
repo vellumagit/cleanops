@@ -66,7 +66,7 @@ export async function sendInvitationAction(
         return { errors: { email: "This person is already a member of your team." }, values: raw };
       }
       if (existingMembership.status === "disabled") {
-        return { errors: { email: "This person was previously removed. Re-activate them from Settings → Members." }, values: raw };
+        return { errors: { email: "This person was previously removed. Re-activate them from Settings → Team members." }, values: raw };
       }
     }
   }

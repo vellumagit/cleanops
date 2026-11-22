@@ -23,7 +23,7 @@ The page shows your latest 100 notifications: the ones sent to you, plus notices
 
 Reading is personal: marking a company-wide notice read clears it for you, not for everyone else.
 
-Owners and admins see **Manage alerts** at the top, which opens **Settings → Automations**. That's where the company's team alerts and digests are switched on and off — see [Automations](help:automations).
+Owners and admins see **Manage alerts** at the top, which opens **Settings → Team alerts & housekeeping**. That's where the company's team alerts and digests are switched on and off — see [Automations](help:automations).
 
 ## Push notifications on your phone
 
@@ -72,7 +72,7 @@ Most notifications stay in the app and on your phone. A handful are emailed too,
 
 Unless marked, these go to every owner, admin, and manager. Some only happen when the automation behind them is on. The email goes to the contact email on your record in **Employees**, or, if there isn't one, the email you sign in with.
 
-Weekly and monthly digests, crew schedules, and other team alerts are switched on in **Settings → Automations**, under *Team alerts & housekeeping*.
+Weekly and monthly digests, crew schedules, and other team alerts are switched on in **Settings → Team alerts & housekeeping**.
 
 ## Your profile
 

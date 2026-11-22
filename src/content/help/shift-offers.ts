@@ -65,7 +65,7 @@ All offers are listed on [Job offers](/app/freelancers/offers) — from **On-cal
 
 ## Unfilled-shift alerts
 
-Once a day Sollos looks for pending or confirmed jobs starting within the next 24 hours that nobody is covering — no crew member and no claimed offer. Each one sends owners, admins and managers an **Unfilled shift in < 24h** notification (*… has no one assigned*), linked to the booking, at most once per job a day. It's controlled by **Unassigned booking alert** in [Settings → Automations](/app/settings/automations).
+Once a day Sollos looks for pending or confirmed jobs starting within the next 24 hours that nobody is covering — no crew member and no claimed offer. Each one sends owners, admins and managers an **Unfilled shift in < 24h** notification (*… has no one assigned*), linked to the booking, at most once per job a day. It's controlled by **Unassigned booking alert** in [Settings → Team alerts & housekeeping](/app/settings/team-alerts).
 
 The same gaps show in other places as they happen: the **Starts soon · no one assigned** chip on the bookings list, and the **Needs coverage** panel on the scheduler.
 

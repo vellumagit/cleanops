@@ -67,7 +67,7 @@ Manual payments (e-transfer, cash, cheque) aren't refunded through Sollos: you r
 
 ## Payment instructions (e-transfer, cheque, cash)
 
-[Settings → Payment instructions](/app/settings/payment-methods) (owners and admins) holds the text clients see under **How to pay** on every invoice. Type what a client needs, for example your e-transfer email or where to mail a cheque, in **Default instructions** and press **Save instructions**.
+[Settings → Getting paid](/app/settings/payment-methods) (owners and admins) holds the text clients see under **How to pay** on every invoice. Type what a client needs, for example your e-transfer email or where to mail a cheque, in **Default instructions** and press **Save instructions**.
 
 This text is public: anyone with an invoice link can read it, so don't put anything there you wouldn't email to a stranger.
 
@@ -75,12 +75,12 @@ When the money arrives, record it on the invoice by hand; see [Invoicing](help:i
 
 ## Tips
 
-Tipping is off until you turn it on in [Settings → Invoicing](/app/settings/invoicing), under **Tips**:
+Both tip settings are on [Settings → Getting paid](/app/settings/payment-methods), under **Tipping**. Card tips are off until you turn them on in **Tips on card payments**:
 
 - **Let clients add a tip when they pay** adds a tip choice to the card checkout. **No tip** is always offered, and clients can pick **Other** to enter their own amount.
 - **Suggested amounts** are percentages of the invoice balance; pick up to 4 from 5, 10, 15, 18, 20 and 25 percent.
 
-Card tips need Stripe. For clients paying by e-transfer or cash, the **Tipping** box on Settings → Payment instructions holds a short note shown under your instructions, such as asking them to add the tip to their e-transfer. It only appears while tipping is turned on.
+Card tips need Stripe. For clients paying by e-transfer or cash, **Tip wording on the invoice**, just below, holds a short note shown under your instructions, such as asking them to add the tip to their e-transfer. It only appears while tipping is turned on.
 
 Tips collected land in your business's account along with the payment; Payroll keeps track of what you still owe each cleaner. See [Timesheets & payroll](help:timesheets-and-payroll).
 
@@ -92,7 +92,7 @@ Tips collected land in your business's account along with the payment; Payroll k
 
 **Can I refund from my Stripe dashboard instead?** Refund from the invoice in Sollos: Stripe payments are taken through Sollos's platform, so the charge doesn't sit in your own dashboard to refund, and refunding here keeps the invoice, the tip ledger and your books in step.
 
-**How do clients pay by e-transfer?** Write your e-transfer details in Settings → Payment instructions. They appear on every invoice's pay page. Record each payment on the invoice when it arrives.
+**How do clients pay by e-transfer?** Write your e-transfer details in Settings → Getting paid. They appear on every invoice's pay page. Record each payment on the invoice when it arrives.
 
 **Do clients get a receipt?** Yes, when the **Receipt + review request on payment** automation is on and the payment covers the invoice. It goes by their billing preference.
 

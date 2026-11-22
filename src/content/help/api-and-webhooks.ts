@@ -11,10 +11,10 @@ export const article: HelpArticle = {
 Three settings pages let other software talk to Sollos. You don't need to be technical to set them up — create the key or URL here, then hand it (and this page) to whoever looks after your website or automations.
 
 - **API keys** — let a tool like Zapier, Make.com or n8n *read and change* your clients, bookings, estimates and invoices.
-- **Webhooks (outbound)** — Sollos *tells* another system when certain things happen.
-- **Intake forms (inbound)** — a URL your website's forms (or Typeform, Jotform, Zapier) send submissions to, so they land in Sollos as leads, requests or job applicants.
+- **Webhooks** — Sollos *tells* another system when certain things happen.
+- **Website & lead forms** (intake forms) — a URL your website's forms (or Typeform, Jotform, Zapier) send submissions to, so they land in Sollos as leads, requests or job applicants.
 
-All three are under **Settings → Integrations** on the Settings page, and are for **owners and admins only**. For ready-made connections (Stripe, QuickBooks, Google Calendar) see [Integrations](help:integrations).
+API Keys and Webhooks are in the **Connections** group on the Settings page; Website & lead forms is in the **Clients** group, beside the alerts for new leads. All three are for **owners and admins only**. For ready-made connections (Stripe, QuickBooks, Google Calendar) see [Integrations](help:integrations).
 
 ## API keys
 
@@ -43,7 +43,7 @@ Each company can make **120 requests a minute**; beyond that the API answers 429
 
 ## Webhooks (outbound)
 
-**Settings → Webhooks (outbound)** sends a message to another system the moment something happens, so a Zapier or Make.com scenario can react — add a row to a spreadsheet, post in Slack, whatever you build.
+**Settings → Webhooks** sends a message to another system the moment something happens, so a Zapier or Make.com scenario can react — add a row to a spreadsheet, post in Slack, whatever you build.
 
 > **Important:** webhooks currently fire for changes made **through the API or a website form** only. Changes you make inside the Sollos app — booking a job, completing it, recording a payment — don't send webhooks yet. The page says this at the top.
 
@@ -75,9 +75,9 @@ Every message carries an \`X-Sollos-Signature\` header: \`sha256=\` followed by 
 
 **Retries.** The receiving system has 10 seconds to answer with a 2xx code. If it doesn't — a timeout, a 5xx error, a network failure — Sollos tries again after about 2 seconds and again after about 10, three attempts in all. A 4xx answer (bad URL, wrong permissions) isn't retried, and a redirect counts as a failure, because redirects aren't followed.
 
-## Intake forms (inbound)
+## Intake forms (Website & lead forms)
 
-**Settings → Intake forms** gives each of your outside forms a private URL. Point the form at it and every submission lands in Sollos automatically. For how this fits with your website, see [Website forms](help:website-forms).
+**Settings → Website & lead forms** gives each of your outside forms a private URL. Point the form at it and every submission lands in Sollos automatically. For how this fits with your website, see [Website forms](help:website-forms).
 
 ### Creating one
 

@@ -195,7 +195,7 @@ describe.skipIf(!hasPostgrest)("company details", { timeout: 120_000 }, () => {
     const { saveContactInfoAction } = await import("@/app/app/settings/email/actions");
     const { saveTaxDefaultsAction, saveCurrencyAction } = await import("@/app/app/settings/currency/actions");
     const { updateOrgTimezoneAction } = await import("@/app/app/settings/timezone/actions");
-    const { updateThresholdsAction } = await import("@/app/app/settings/thresholds/actions");
+    const { updateThresholdAction } = await import("@/app/app/settings/thresholds/actions");
     const c = await company();
     const org = async () =>
       (await api.sql<Record<string, unknown>>(
@@ -220,16 +220,20 @@ describe.skipIf(!hasPostgrest)("company details", { timeout: 120_000 }, () => {
     expect(await as(c.owner, () => updateOrgTimezoneAction({}, form({ timezone: "America/Edmonton" })))).toEqual({ ok: true });
     expect(await as(c.owner, () => updateOrgTimezoneAction({}, form({ timezone: "Mars/Olympus_Mons" })))).toMatchObject({ error: expect.stringContaining("isn't a recognized") });
 
-    expect(
-      await as(c.owner, () =>
-        updateThresholdsAction({}, form({ stale_estimate_expire_days: "30", invoice_void_days: "", booking_auto_complete_hours: "4", archive_after_days: "730", overtime_threshold_hours: "40" })),
-      ),
-    ).toEqual({ ok: true });
-    expect(
-      await as(c.owner, () =>
-        updateThresholdsAction({}, form({ stale_estimate_expire_days: "30", invoice_void_days: "", booking_auto_complete_hours: "4", archive_after_days: "90", overtime_threshold_hours: "40" })),
-      ),
-    ).toMatchObject({ error: expect.stringContaining("invalid") });
+    // Each timing setting saves on its own, from under the switch it times.
+    const timing = (field: string, value: string) =>
+      as(c.owner, () => updateThresholdAction({}, form({ field, value })));
+    expect(await timing("stale_estimate_expire_days", "30")).toEqual({ ok: true });
+    expect(await timing("invoice_void_days", "")).toEqual({ ok: true }); // blank = never
+    expect(await timing("booking_auto_complete_hours", "4")).toEqual({ ok: true });
+    expect(await timing("archive_after_days", "730")).toEqual({ ok: true });
+    expect(await timing("overtime_threshold_hours", "40")).toEqual({ ok: true });
+    // Below a floor, overtime left blank, or a column that isn't a timing
+    // setting: refused in words, nothing written.
+    expect(await timing("archive_after_days", "90")).toMatchObject({ error: expect.stringContaining("at least 180") });
+    expect(await timing("overtime_threshold_hours", "")).toMatchObject({ error: expect.stringContaining("at least 1") });
+    expect(await timing("timezone", "5")).toEqual({ error: "Unknown setting." });
+    expect(await timing("toString", "5")).toEqual({ error: "Unknown setting." });
 
     expect(await org()).toEqual({
       brand_color: "4f46e5",
@@ -249,6 +253,7 @@ describe.skipIf(!hasPostgrest)("company details", { timeout: 120_000 }, () => {
     const before = await org();
     await as(c.manager, () => saveTaxDefaultsAction({}, form({ tax_rate: "13", tax_label: "HST" })));
     await as(c.manager, () => updateOrgTimezoneAction({}, form({ timezone: "America/Toronto" })));
+    await as(c.manager, () => updateThresholdAction({}, form({ field: "archive_after_days", value: "365" })));
     expect(await org()).toEqual(before);
   });
 });

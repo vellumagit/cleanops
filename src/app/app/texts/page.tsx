@@ -71,10 +71,10 @@ export default async function TextRepliesPage() {
           Texting isn&rsquo;t set up for your company yet, so nobody can reply.{" "}
           {membership.role === "owner" || membership.role === "admin" ? (
             <Link href="/app/settings/sms" className="font-medium text-foreground underline underline-offset-2">
-              Set it up in Settings → SMS
+              Set it up in Settings → SMS / Texting
             </Link>
           ) : (
-            "An owner or admin can set it up in Settings → SMS."
+            "An owner or admin can set it up in Settings → SMS / Texting."
           )}
         </p>
       )}

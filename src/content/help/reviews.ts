@@ -14,7 +14,7 @@ The **Reviews** page is under sidebar → **People** → **Reviews**.
 
 ## Where reviews come from
 
-1. **The review request email.** With **Internal review request** turned on in **Settings → Client automations**, clients get an email with a review link after a completed job.
+1. **The review request email.** With **Internal review request** turned on in **Settings → Client messages**, clients get an email with a review link after a completed job.
 2. **The client portal.** Every finished visit in a client's portal has a **Leave a review** link, so they can review without being asked (see [The client portal](help:client-portal)).
 3. **You add one.** Owners and admins can press **New review** to record a review a client gave you some other way, by phone or in person.
 
@@ -40,14 +40,14 @@ Rules the page follows:
 
 ## Being told about new reviews
 
-Two automations in **Settings → Client automations** (both off until you turn them on):
+Two automations in **Settings → Client messages** (both off until you turn them on):
 
 - **Notify admin on new review**: an in-app notification to owners and admins for each new review.
 - **Low review alert**: an email to owners and admins when a review is 3 stars or lower, with the full text, so you can respond quickly.
 
 ## Google review requests
 
-**Google review request** (also in **Settings → Client automations**) emails a client your Google review link 48 hours after their first completed job. If they don't click, they get a reminder a week later, then monthly reminders until the limit (four more by default). It stops as soon as they click. It needs your Google review link in [Settings → Branding](/app/settings/branding) and an email on the client. It only asks clients whose first completed job was within the last 14 days, so turning it on doesn't email clients you've had for months.
+**Google review request** (also in **Settings → Client messages**) emails a client your Google review link 48 hours after their first completed job. If they don't click, they get a reminder a week later, then monthly reminders until the limit (four more by default). It stops as soon as they click. It needs your Google review link in [Settings → Branding](/app/settings/branding) and an email on the client. It only asks clients whose first completed job was within the last 14 days, so turning it on doesn't email clients you've had for months.
 
 Each client's profile has a **Google review status** panel that shows where they are and lets you **Mark reviewed**, **Stop asking**, **Resend now**, or **Reset** (see [Clients](help:clients#google-review-status)). When you add a client, you can tick **This customer has already left us a Google review** so they're never asked.
 
@@ -69,7 +69,7 @@ Owners and admins see a pencil on each row. It opens **Edit review**, where you 
 
 ## Common questions
 
-**Why isn't anyone getting review emails?** **Internal review request** has to be turned on in **Settings → Client automations**, and the client needs an email address. A client set to **Do not contact**, or with **Reviews & rebooking** turned off in their notifications, isn't emailed either.
+**Why isn't anyone getting review emails?** **Internal review request** has to be turned on in **Settings → Client messages**, and the client needs an email address. A client set to **Do not contact**, or with **Reviews & rebooking** turned off in their notifications, isn't emailed either.
 
 **A client says the review link doesn't work.** Links stop working 60 days after the job. Links only work for completed jobs. If the client has already left a review, the page shows that review instead of a new form.
 

@@ -16,7 +16,7 @@ Two-step sign-in (multi-factor authentication) asks for a 6-digit code from an a
 
 To turn it on:
 
-1. Open [Security](/app/profile/security) — owners and admins find it in **Settings → Security (your account)**.
+1. Open [Security](/app/profile/security) — owners and admins find it in **Settings → Security**.
 2. Press **Enable multi-factor authentication**.
 3. **Step 1** — scan the QR code with an authenticator app (Authy, Google Authenticator, 1Password, Microsoft Authenticator, and so on). If you can't scan, open *Can't scan? Enter the code manually* and type the code into the app.
 4. **Step 2** — enter the 6-digit code the app shows and press **Confirm**.
@@ -85,7 +85,7 @@ On a computer, use the small arrow button on your name card at the bottom of the
 
 ## Common questions
 
-**How do I turn on two-factor authentication?** **Settings → Security (your account) → Enable multi-factor authentication**, scan the QR code with an authenticator app, and enter the 6-digit code.
+**How do I turn on two-factor authentication?** **Settings → Security → Enable multi-factor authentication**, scan the QR code with an authenticator app, and enter the 6-digit code.
 
 **I got a new phone and can't get past the code screen.** There are no backup codes. Email support@sollos3.com from your sign-in address. Next time, move the authenticator app to the new phone before you wipe the old one.
 

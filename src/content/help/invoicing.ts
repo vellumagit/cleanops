@@ -76,9 +76,9 @@ If auto-send couldn't deliver an invoice (no email, the client opted out, a $0 i
 
 ## Overdue reminders
 
-When the **Overdue invoice reminder** automation is on (Settings → Client automations), Sollos reminds the client once every 7 days while an invoice is overdue, by email and/or text according to their billing preference. A partly paid invoice that was sent and is past its due date is chased too, for the balance only, and a leftover under $1.00 isn't chased. Reminders stop on their own once the invoice is paid or voided. Clients set to **Do not contact**, or with **Billing** messages turned off, are never reminded.
+When the **Overdue invoice reminder** automation is on (Settings → Client messages), Sollos reminds the client once every 7 days while an invoice is overdue, by email and/or text according to their billing preference. A partly paid invoice that was sent and is past its due date is chased too, for the balance only, and a leftover under $1.00 isn't chased. Reminders stop on their own once the invoice is paid or voided. Clients set to **Do not contact**, or with **Billing** messages turned off, are never reminded.
 
-A separate automation, **Auto-void long-overdue invoices**, voids unpaid invoices once they are a set time past due (1 year unless you change it in Settings → Automation thresholds) and emails owners and admins. It's off unless you turn it on.
+A separate automation, **Auto-void long-overdue invoices**, voids unpaid invoices once they are a set time past due (1 year unless you change the days under its switch on Settings → Invoicing) and emails owners and admins. It's off unless you turn it on.
 
 ## Recording a payment by hand
 
@@ -141,7 +141,7 @@ With Sage or QuickBooks connected under **Settings → Integrations**, an invoic
 
 **Can I mark an invoice sent without emailing it?** Yes: set **Status** to Sent on the edit form. Nothing is emailed; it just records that the client has it (for example, you handed over a paper copy).
 
-**How do I stop the overdue reminders for one client?** Turn off the **Billing** category in that client's notification settings, or set them to **Do not contact**. Turning off **Overdue invoice reminder** in Settings → Client automations stops them for everyone.
+**How do I stop the overdue reminders for one client?** Turn off the **Billing** category in that client's notification settings, or set them to **Do not contact**. Turning off **Overdue invoice reminder** in Settings → Client messages stops them for everyone.
 
 **I voided an invoice by mistake. How do I get the job billed again?** A voided invoice stays void. Open the job and use **Generate invoice**, or bill it with Bill for a period; automatic billing won't pick it up on its own.
 

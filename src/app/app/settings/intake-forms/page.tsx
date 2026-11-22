@@ -15,7 +15,7 @@ import {
   deleteIntakeFormAction,
 } from "./actions";
 
-export const metadata = { title: "Intake forms" };
+export const metadata = { title: "Website & lead forms" };
 
 type IntakeForm = {
   id: string;
@@ -47,7 +47,7 @@ export default async function IntakeFormsPage() {
 
   return (
     <PageShell
-      title="Intake forms"
+      title="Website & lead forms"
       description="Point any external form or chat tool (your website, Typeform, ManyChat, GoHighLevel, Zapier…) at one of these URLs and submissions land in Sollos automatically."
     >
       <div className="space-y-4">

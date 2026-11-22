@@ -119,7 +119,7 @@ export async function autoInvoiceOnJobComplete(
       ))
     ) {
       const reason =
-        "Auto-invoice is disabled for this org in Settings → Automations.";
+        "Auto-invoice is disabled for this org in Settings → Invoicing.";
       console.log(
         `[auto] Auto-invoice paused for org ${booking.organization_id}`,
       );

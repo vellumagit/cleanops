@@ -14,7 +14,7 @@ Your website's estimate calculator and contact form can send submissions straigh
 
 You keep the form on your own website. Sollos gives you an address to send the form's submissions to.
 
-1. Go to [Settings → Intake forms](/app/settings/intake-forms). Owners and admins only.
+1. Go to [Settings → Website & lead forms](/app/settings/intake-forms). Owners and admins only.
 2. Under **New intake form**, give it a **Name**, pick the **Type** (**Estimate calculator** or **Contact form**), and press **Create**.
 3. Copy the **Webhook URL (POST here)** it shows.
 4. Set your website form to send its submissions to that address. Whoever built your site can do this: the form's action, or its submit code, posts to the URL.
@@ -30,7 +30,7 @@ The same page offers a **Job application** type, which sends applicants to the A
 
 ## Fields Sollos recognizes
 
-Settings → Intake forms lists the field names for each type. Name your website's inputs the same way and everything lands in the right place.
+Settings → Website & lead forms lists the field names for each type. Name your website's inputs the same way and everything lands in the right place.
 
 - **Estimate calculator**: fullName or name; email, phone; address, city; bedrooms, bathrooms, kitchens; pets, oven, fridge, windows, blinds, carpets; schedule, cleaningDate; the calculator's prices (priceInitialHigh, priceRecurringHigh, travelFee); hearAboutUs, notes. Only a name is required.
 - **Contact form**: name or fullName; email, phone; city; urgency; notes or message; page_url, referrer; and website (the spam trap, see below).
@@ -65,7 +65,7 @@ When a submission comes in, Sollos looks for someone you already have with the s
 
 ## Lead alerts: email and text
 
-Both alerts have a switch at the top of **Settings → Intake forms**.
+Both alerts have a switch at the top of **Settings → Website & lead forms**.
 
 - **Email me when a lead comes in** is on by default. It keeps working even when your automations master switch is off, because a missed lead costs more than a stray email. It goes to every owner and admin, plus your company contact email from [Settings → Email & contact info](/app/settings/email). Turn it off there if you'd rather rely on the in-app notification.
 - **Text me when a lead comes in** is off until you turn it on, like every other text. It needs texting turned on (see [Texting](help:texting)). It goes to each owner's and admin's profile phone plus your company contact phone, and counts against your included texts. The text carries the person's name, phone or email, where they are, and the start of what they asked.
@@ -87,7 +87,7 @@ An inquiry stays open on Requests until the person stops being a question mark. 
 
 If your leads start in an Instagram or Facebook DM, a Facebook lead ad, or a chat flow, a tool like ManyChat or GoHighLevel can pass them to Sollos.
 
-1. Go to [Settings → Intake forms](/app/settings/intake-forms), create a form, and pick the type **Social & chat (ManyChat, GoHighLevel)**.
+1. Go to [Settings → Website & lead forms](/app/settings/intake-forms), create a form, and pick the type **Social & chat (ManyChat, GoHighLevel)**.
 2. Copy its **Webhook URL (POST here)**.
 3. In **ManyChat**: in your flow, add an Action, choose **External Request**, set the method to POST, paste the URL, and add **Full Contact Data** as the body.
 4. In **GoHighLevel**: in a workflow, add the **Webhook** action and paste the URL. If the workflow's trigger knows the network (say, a Facebook lead form), add a custom value named channel set to facebook.
@@ -108,7 +108,7 @@ You can also pick **Instagram**, **Facebook**, **TikTok** or **WhatsApp** as the
 
 **Do I get a form to embed on my site?** No. Sollos doesn't host the form. Your website keeps its own form and sends submissions to your intake address.
 
-**Submissions stopped arriving.** Check the form shows **Active** on Settings → Intake forms. If someone pressed **Regenerate URL**, your website still has the old address. Copy the new one into your form.
+**Submissions stopped arriving.** Check the form shows **Active** on Settings → Website & lead forms. If someone pressed **Regenerate URL**, your website still has the old address. Copy the new one into your form.
 
 **Why didn't I get the lead email?** Check **Email me when a lead comes in** is on, and that your company contact email in Settings → Email & contact info is the inbox you watch. The lead is in Sollos either way: look on Leads or Requests.
 

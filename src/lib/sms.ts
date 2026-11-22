@@ -497,7 +497,7 @@ async function maybeAlertCap(
       organizationId: orgId,
       type: "sms_cap",
       title: "SMS paused — monthly limit reached",
-      body: `Texting hit your ${which} for this month. Increase the cap in Settings → SMS to resume.`,
+      body: `Texting hit your ${which} for this month. Increase the cap in Settings → SMS / Texting to resume.`,
       href: "/app/settings/sms",
     });
   } catch (alertErr) {

@@ -12,6 +12,13 @@ import { resolveClockOutThresholds } from "@/lib/shift-overrun";
 import { toggleAutomationAction, type AutomationKey } from "./actions";
 import { ClockOutThresholds } from "./clock-out-thresholds";
 import type { SatelliteAutomation } from "./satellite-registry";
+import {
+  EMPTY_THRESHOLDS,
+  THRESHOLD_FOR_AUTOMATION,
+  THRESHOLD_SELECT,
+  type ThresholdValues,
+} from "@/app/app/settings/thresholds/threshold-fields";
+import { ThresholdInline } from "@/app/app/settings/thresholds/threshold-inline";
 
 const AUDIENCE_STYLE: Record<
   AutomationAudience,
@@ -52,14 +59,17 @@ export async function SatelliteAutomations({
   const admin = createSupabaseAdminClient();
   const { data: org } = (await admin
     .from("organizations")
-    .select("automation_settings, automations_enabled")
+    .select(`automation_settings, automations_enabled, ${THRESHOLD_SELECT}`)
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
-    data: {
-      automation_settings: Record<string, { enabled?: boolean }> | null;
-      automations_enabled: boolean | null;
-    } | null;
+    data:
+      | ({
+          automation_settings: Record<string, { enabled?: boolean }> | null;
+          automations_enabled: boolean | null;
+        } & ThresholdValues)
+      | null;
   };
+  const thresholds: ThresholdValues = org ?? EMPTY_THRESHOLDS;
   const settings = org?.automation_settings ?? {};
   const masterOn = org?.automations_enabled === true;
   const clockOutThresholds = resolveClockOutThresholds(
@@ -73,13 +83,12 @@ export async function SatelliteAutomations({
         {title}
       </h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        Part of your automations — moved here to live beside what they act
-        on. The{" "}
+        These live beside what they act on. The{" "}
         <Link
           href="/app/settings/automations"
           className="underline underline-offset-2"
         >
-          master switch
+          automations master switch
         </Link>{" "}
         still governs them.
       </p>
@@ -153,6 +162,12 @@ export async function SatelliteAutomations({
                   </SubmitButton>
                 </form>
               </div>
+              {THRESHOLD_FOR_AUTOMATION[a.key] && on && (
+                <ThresholdInline
+                  spec={THRESHOLD_FOR_AUTOMATION[a.key]!}
+                  value={thresholds[THRESHOLD_FOR_AUTOMATION[a.key]!.field]}
+                />
+              )}
               {a.key === "shift_clock_out_reminder" && on && (
                 <ClockOutThresholds
                   graceMinutes={clockOutThresholds.graceMinutes}
