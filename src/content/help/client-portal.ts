@@ -41,6 +41,21 @@ You have no page until you make one. Owners and admins set it up in **Settings â
 
 **Take it down** hides the page again and keeps everything you set up. Changing the **Link name** changes your link, and the old one stops working, so update it anywhere you shared it.
 
+### When you can be booked
+
+Below the page's own settings, **When you can be booked** sets the times your page will be able to offer. Nothing here is shown to the public yet. It feeds the preview underneath, so you can check it against your calendar first.
+
+- **Opening hours**: tick the days you take bookings and set the hours. A new page has none saved, so it is closed every day until you press **Save hours and people**. Weekdays nine to five are filled in as a start.
+- **Notice you need**: in hours. 24 means nobody can book for sooner than this time tomorrow.
+- **How far ahead**: in days.
+- **Gap between jobs**: minutes kept clear before and after a cleaner's other jobs, for travel.
+- **Start times every**: 15 minutes, 30 minutes, or an hour.
+- **Who takes online bookings**: only the people you tick are ever offered. Nobody is ticked to start with.
+
+Each service in **Services on your page** also shows its length and takes a number of cleaners. The length comes from Settings â†’ Services and is the hours for one person. If your crews share a job's hours, a two-hour job for two cleaners is offered as one hour on site.
+
+**What a visitor would see** lists the open start times for one service over seven days. Pick the **Service** and a **From** date and press **Show**. A time is listed when enough ticked people are free: not on approved time off, inside the hours they gave, and not on another job (with your gap either side). Hover a time to see who is free. A statutory holiday is closed if you have a holiday region set. A day with no times says why, such as **Closed.**, **Too soon: inside the notice you ask for.** or **No open times: nobody is free.**
+
 **Ask for a clean** is a short form: what they'd like, a day and time of day that suit them, the address, and their name, email and phone. It asks; it doesn't book. When someone sends it:
 
 - It lands on your [Requests](/app/bookings/requests) page, and owners, admins, and managers get a "New booking request" notification. The owner is emailed too.

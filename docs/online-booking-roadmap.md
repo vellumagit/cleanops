@@ -2,8 +2,8 @@
 
 Written 2026-11-19.
 
-Status, 2026-11-22: **phase 0 and phase 1 are built.** Phase 2 (open times)
-is next. What each built phase left out is listed under it.
+Status, 2026-11-22: **phases 0, 1 and 2 are built.** Phase 3 (a guest books
+a time) is next. What each built phase left out is listed under it.
 
 ## The goal
 
@@ -229,7 +229,7 @@ an old name after a rename (the old link simply stops working).
 
 Ships real value on its own and needs no slot logic.
 
-### Phase 2: open times (medium, the core)
+### Phase 2: open times (BUILT 2026-11-22)
 
 - Settings: opening hours per weekday, earliest notice, how far ahead, gap
   between jobs, which cleaners take online bookings, slot step (30 or 60
@@ -242,6 +242,32 @@ Ships real value on its own and needs no slot logic.
   can check it against the real calendar before anything is public.
 
 Nothing public changes in this phase.
+
+Built as: `src/lib/open-times.ts` (the function, no database access),
+`src/lib/open-times-load.ts` (gathers a company's real schedule for it),
+`src/lib/open-time-rules.ts` (reading and checking the settings), and two
+cards on Settings, Online booking. Migration `20261122030000`.
+
+Decisions made while building:
+
+- A page starts with no hours saved, so it is closed every day, and with
+  nobody ticked to take online bookings. Both are the company's to switch on.
+- A service says how many cleaners it needs online (1 to 4 in the form). Its
+  length is the one-person hours; where the company shares hours between a
+  crew, each person is on site for length / crew.
+- A cleaner with no weekly hours on file is treated as free inside the
+  company's opening hours. One with hours on file is held to them.
+- Busy time comes from the same windows the double-booking guard uses, plus
+  the company's gap either side.
+- A statutory holiday (the company's holiday region) is closed online.
+
+Left out of phase 2:
+
+- One stretch of hours per weekday (no split days such as 9 to 12 and 2 to 5).
+  The stored shape and the function already take several.
+- No company-set closed dates beyond statutory holidays.
+- Travel time is the flat gap, not distance.
+- The preview is seven days for one service; it does not show a whole month.
 
 ### Phase 3: booking a time as a guest (medium)
 

@@ -29,6 +29,10 @@ export type PageService = {
   name: string;
   description: string | null;
   default_price_cents: number | null;
+  /** The booked length: the hours for one person. Null when none is set. */
+  default_duration_minutes: number | null;
+  /** How many cleaners the job needs when booked online. */
+  online_crew_size: number;
   show_on_booking_page: boolean;
   booking_page_price: PriceMode;
 };
@@ -50,7 +54,7 @@ export async function bookingPageFor(organizationId: string, admin: Admin = crea
 export async function pageServices(organizationId: string, admin: Admin = createSupabaseAdminClient()): Promise<PageService[]> {
   const { data, error } = (await admin
     .from("service_types")
-    .select("id, name, description, default_price_cents, show_on_booking_page, booking_page_price, sort_order" as never)
+    .select("id, name, description, default_price_cents, default_duration_minutes, online_crew_size, show_on_booking_page, booking_page_price, sort_order" as never)
     .eq("organization_id", organizationId)
     .eq("is_active", true)
     .is("archived_at", null)
@@ -63,6 +67,7 @@ export async function pageServices(organizationId: string, admin: Admin = create
   return (data ?? []).map((s) => ({
     ...s,
     show_on_booking_page: s.show_on_booking_page === true,
+    online_crew_size: Math.min(6, Math.max(1, Number(s.online_crew_size) || 1)),
     booking_page_price: isPriceMode(s.booking_page_price) ? s.booking_page_price : "hidden",
   }));
 }

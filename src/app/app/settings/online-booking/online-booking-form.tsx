@@ -18,7 +18,17 @@ import {
 const empty: OnlineBookingState = {};
 
 type Page = { slug: string; status: "draft" | "published"; headline: string | null; intro: string | null };
-type Service = { id: string; name: string; price: string | null; show: boolean; priceMode: PriceMode };
+type Service = {
+  id: string;
+  name: string;
+  price: string | null;
+  /** The booked length, "2h", or null when the service has none. */
+  length: string | null;
+  /** How many cleaners the job needs when booked online. */
+  crewSize: number;
+  show: boolean;
+  priceMode: PriceMode;
+};
 
 export function OnlineBookingForm({
   site,
@@ -181,8 +191,8 @@ function Editor({ site, page, services }: { site: string; page: Page; services: 
         <div>
           <p className="text-sm font-medium">Services on your page</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Tick the ones a visitor should see, and choose whether each shows a price. Prices come from Settings,
-            Services.
+            Tick the ones a visitor should see, choose whether each shows a price, and say how many cleaners it
+            takes. Prices and lengths come from Settings, Services; a length is the hours for one person.
           </p>
           {services.length === 0 ? (
             <p className="mt-3 text-sm text-muted-foreground">You have no services yet. Add them in Settings, Services.</p>
@@ -194,12 +204,21 @@ function Editor({ site, page, services }: { site: string; page: Page; services: 
                   <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
                     <input type="checkbox" name="show" value={s.id} defaultChecked={s.show} className="h-4 w-4 shrink-0 rounded border-input" />
                     <span className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">{s.name}</span>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{s.price ?? "no price set"}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {s.price ?? "no price set"} · {s.length ?? "no length set"}
+                    </span>
                   </label>
                   <FormSelect name={`price_${s.id}`} defaultValue={s.priceMode} aria-label={`How ${s.name} shows its price`} className="w-full sm:w-52">
                     {PRICE_MODES.map((m) => (
                       <option key={m.value} value={m.value}>
                         {m.label}
+                      </option>
+                    ))}
+                  </FormSelect>
+                  <FormSelect name={`crew_${s.id}`} defaultValue={String(s.crewSize)} aria-label={`How many cleaners ${s.name} needs`} className="w-full sm:w-36">
+                    {[1, 2, 3, 4].map((n) => (
+                      <option key={n} value={n}>
+                        {n === 1 ? "1 cleaner" : `${n} cleaners`}
                       </option>
                     ))}
                   </FormSelect>

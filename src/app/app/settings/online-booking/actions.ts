@@ -5,6 +5,8 @@ import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { isPriceMode, nameProblem, tidyName } from "@/lib/booking-page-rules";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { parseRulesForm } from "@/lib/open-time-rules";
 
 /**
  * Settings, Online booking: a company makes its own booking page here, and
@@ -131,9 +133,14 @@ export async function saveBookingPageAction(_prev: OnlineBookingState, formData:
     // is left exactly as it is.
     if (!formData.has(`listed_${s.id}`)) continue;
     const mode = String(formData.get(`price_${s.id}`) ?? "hidden");
+    const crew = Number(formData.get(`crew_${s.id}`) ?? 1);
     const { error: svcErr } = (await supabase
       .from("service_types")
-      .update({ show_on_booking_page: shown.has(s.id), booking_page_price: isPriceMode(mode) ? mode : "hidden" } as never)
+      .update({
+        show_on_booking_page: shown.has(s.id),
+        booking_page_price: isPriceMode(mode) ? mode : "hidden",
+        online_crew_size: Number.isInteger(crew) && crew >= 1 && crew <= 6 ? crew : 1,
+      } as never)
       .eq("id", s.id)
       .eq("organization_id", orgId)) as unknown as { error: { message: string } | null };
     if (svcErr) return { error: `The page was saved, but a service's setting was not: ${svcErr.message}` };
@@ -176,4 +183,59 @@ export async function setBookingPagePublishedAction(_prev: OnlineBookingState, f
       ? "Your page is live. Anyone with the link can open it."
       : "Your page is taken down. Everything you set up is kept, and requests already sent are still in your inbox.",
   };
+}
+
+/**
+ * When the company can be booked online, and by whom (roadmap phase 2).
+ *
+ * The rules go on the booking page; "takes online bookings" goes on each
+ * person. Only people the company ticks are ever offered to a visitor, and
+ * nobody is ticked to start with.
+ */
+export async function saveOpenTimeRulesAction(_prev: OnlineBookingState, formData: FormData): Promise<OnlineBookingState> {
+  const who = await admins();
+  if ("error" in who) return { error: who.error };
+  const { membership, supabase } = who.ctx;
+  const orgId = membership.organization_id;
+
+  const parsed = parseRulesForm((name) => String(formData.get(name) ?? ""));
+  if (!parsed.ok) return { error: parsed.error };
+
+  const { data: saved, error } = (await supabase
+    .from("booking_pages" as never)
+    .update({
+      opening_hours: parsed.rules.openingHours,
+      min_notice_hours: parsed.rules.minNoticeHours,
+      max_days_ahead: parsed.rules.maxDaysAhead,
+      gap_minutes: parsed.rules.gapMinutes,
+      slot_step_minutes: parsed.rules.stepMinutes,
+    } as never)
+    .eq("organization_id" as never, orgId as never)
+    .select("slug")) as unknown as { data: Array<{ slug: string }> | null; error: { message: string } | null };
+  if (error) return { error: error.message };
+  if (!saved?.length) return { error: "Make your page first." };
+
+  // Who takes online bookings. Pinned to this company's own active people,
+  // whatever ids the form posted, and written past the membership rules
+  // (which exist to stop role changes, not this).
+  const admin = createSupabaseAdminClient();
+  const { data: people } = (await admin
+    .from("memberships")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("status", "active")) as unknown as { data: Array<{ id: string }> | null };
+  const ticked = new Set(formData.getAll("takes").map(String));
+  for (const person of people ?? []) {
+    // Someone the form didn't list (added in another tab) is left alone.
+    if (!formData.has(`cleaner_listed_${person.id}`)) continue;
+    const { error: personErr } = (await admin
+      .from("memberships")
+      .update({ takes_online_bookings: ticked.has(person.id) } as never)
+      .eq("id", person.id)
+      .eq("organization_id", orgId)) as unknown as { error: { message: string } | null };
+    if (personErr) return { error: `The hours were saved, but a person's setting was not: ${personErr.message}` };
+  }
+
+  refresh(saved[0].slug);
+  return { ok: "Saved. The preview below uses these." };
 }
