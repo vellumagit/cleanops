@@ -2562,8 +2562,11 @@ export async function updateBookingAction(
           };
         }
 
+        // Clashes are skipped here too, not refused: the series moves, and
+        // someone with another job at a new visit's time comes off that one
+        // visit, which is marked (migration 20261123010000).
         const { data: replacementRows, error: regenerationErr } = await admin.rpc(
-          "update_booking_series_with_assignees",
+          "update_booking_series_with_assignees_skip_clashes" as "update_booking_series_with_assignees",
           {
             p_organization_id: membership.organization_id,
             p_series_id: seriesId,
@@ -2651,6 +2654,20 @@ export async function updateBookingAction(
             );
         }
 
+        // Who was left off which new visit, so nobody gets a calendar entry
+        // for a visit they are not on.
+        let regenLeftOff = new Map<string, Set<string>>();
+        if (regenRows.length > 0 && regenAssignees.length > 0) {
+          try {
+            regenLeftOff = leftOffByBooking(
+              await loadCoverNeeded(membership.organization_id, { bookingIds: regenRows.map((row) => row.id) }),
+            );
+          } catch (err) {
+            // The series is saved either way; the marks are on the visits.
+            console.error("[bookings] could not read which visits need cover:", err);
+          }
+        }
+
         // Create calendar events for each regenerated booking so the
         // rescheduled future occurrences actually land on the org calendar
         // (and any connected personal calendars).
@@ -2669,7 +2686,8 @@ export async function updateBookingAction(
               }).catch((err) =>
                 console.error("[gcal] series-reschedule create:", err),
               );
-              await syncMemberCalendarEvents(rb.id, regenAssignees, {
+              const onThisVisit = regenAssignees.filter((m) => !regenLeftOff.get(rb.id)?.has(m));
+              await syncMemberCalendarEvents(rb.id, onThisVisit, {
                 id: rb.id,
                 scheduled_at: rb.scheduled_at,
                 duration_minutes: parsed.data.duration_minutes,
@@ -2845,8 +2863,19 @@ export async function updateBookingAction(
       ].filter(Boolean) as string[],
     ),
   );
+  // A "this and all future" save can leave someone off this very visit
+  // (they have another job then). They are not told they were put on it.
+  let offThisVisit = new Set<string>();
+  if (updateScope === "this_and_future" && seriesId) {
+    try {
+      offThisVisit =
+        leftOffByBooking(await loadCoverNeeded(membership.organization_id, { bookingIds: [id] })).get(id) ?? offThisVisit;
+    } catch (err) {
+      console.error("[bookings] could not read which visits need cover:", err);
+    }
+  }
   const newAssignees = everyAssignee.filter(
-    (assigneeId) => !previousAssigneeIds.has(assigneeId),
+    (assigneeId) => !previousAssigneeIds.has(assigneeId) && !offThisVisit.has(assigneeId),
   );
   for (const assigneeId of newAssignees) {
     const labels = await getBookingLabels(

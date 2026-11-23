@@ -224,6 +224,100 @@ describe.skipIf(!hasPostgrest)("the booking edit form on a weekly series", () =>
     expect(new Set(rows.map((r) => r.date)).size).toBe(rows.length);
   });
 
+  it("this and all future, moved to Wednesday where Anna has another job on one of the weeks: the series moves, she is left off that one visit, and it is marked", async () => {
+    // Svit, 2026-11-23: a series moved from Wednesday to Thursday with a
+    // cleaner who was booked on some of the new Thursdays. The whole save
+    // was refused ("already booked on 5 of these dates. Nothing was changed").
+    const s = await weeklySeries();
+    const wednesday = (week: number) => ymd(s.base + week * 7 * DAY - DAY);
+    const other = await addClient(api.sql, s.org, "Bonnie Sherwood Park");
+    const busy = await addBooking(api.sql, s.org, other, {
+      scheduledAt: `${wednesday(3)}T10:00:00.000Z`,
+      durationMinutes: 120,
+      status: "confirmed",
+    });
+    await api.sql("update public.bookings set assigned_to = $2 where id = $1", [busy, s.anna.membershipId]);
+    await api.sql(
+      "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary, acceptance_status) values ($1, $2, $3, true, 'accepted')",
+      [s.org, busy, s.anna.membershipId],
+    );
+
+    const res = await save(
+      s.owner,
+      s.visits[1],
+      editForm(s, 1, { scheduled_at: `${wednesday(1)}T09:00`, update_scope: "this_and_future", ...sameSchedule(s, 1) }),
+    );
+    // Lands on the list with the banner for this series.
+    expect(res, api.log()).toBe(`redirected to /app/bookings?cover=${s.series}`);
+
+    const rows = await api.sql<{ id: string; date: string; lead: string | null; crew: string[]; cover: unknown }>(
+      `select b.id, to_char(b.scheduled_at at time zone 'UTC', 'YYYY-MM-DD') as date, b.assigned_to as lead, b.cover_needed as cover,
+              coalesce((select array_agg(ba.membership_id) from public.booking_assignees ba where ba.booking_id = b.id), '{}') as crew
+         from public.bookings b where b.series_id = $1 and b.status <> 'cancelled' order by b.scheduled_at`,
+      [s.series],
+    );
+    expect(rows[0]).toMatchObject({ id: s.visits[0], date: ymd(s.base) });
+    const later = rows.slice(1);
+    expect(later.length).toBeGreaterThanOrEqual(3);
+    expect(later.map((r) => weekday(r.date)), "the series moved to Wednesdays").toEqual(later.map(() => 3));
+    for (const r of later) {
+      if (r.date === wednesday(3)) {
+        expect(r.crew, "left off the week she is on another job").toEqual([]);
+        expect(r.lead).toBeNull();
+        expect(r.cover).toEqual([{ membership_id: s.anna.membershipId, other_booking_id: busy }]);
+      } else {
+        expect(r.crew, r.date).toEqual([s.anna.membershipId]);
+        expect(r.cover, r.date).toBeNull();
+      }
+    }
+    // Her other job is untouched.
+    const [still] = await api.sql<{ lead: string }>("select assigned_to as lead from public.bookings where id = $1", [busy]);
+    expect(still.lead).toBe(s.anna.membershipId);
+  });
+
+  it("the visit being moved is itself on a day Anna is busy: it moves, she comes off it, and the later weeks keep her", async () => {
+    // The database change, run a second time first: it must be safe to.
+    const { readFileSync } = await import("node:fs");
+    await api.db.exec(readFileSync("supabase/migrations/20261123010000_series_move_skips_clashes.sql", "utf8"));
+
+    const s = await weeklySeries();
+    const wednesday = (week: number) => ymd(s.base + week * 7 * DAY - DAY);
+    const other = await addClient(api.sql, s.org, "Bonnie Sherwood Park");
+    const busy = await addBooking(api.sql, s.org, other, {
+      scheduledAt: `${wednesday(1)}T10:00:00.000Z`,
+      durationMinutes: 120,
+      status: "confirmed",
+    });
+    await api.sql("update public.bookings set assigned_to = $2 where id = $1", [busy, s.anna.membershipId]);
+    await api.sql(
+      "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary, acceptance_status) values ($1, $2, $3, true, 'accepted')",
+      [s.org, busy, s.anna.membershipId],
+    );
+
+    const res = await save(
+      s.owner,
+      s.visits[1],
+      editForm(s, 1, { scheduled_at: `${wednesday(1)}T09:00`, update_scope: "this_and_future", ...sameSchedule(s, 1) }),
+    );
+    expect(res, api.log()).toBe(`redirected to /app/bookings?cover=${s.series}`);
+
+    const rows = await api.sql<{ id: string; date: string; crew: string[]; cover: unknown }>(
+      `select b.id, to_char(b.scheduled_at at time zone 'UTC', 'YYYY-MM-DD') as date, b.cover_needed as cover,
+              coalesce((select array_agg(ba.membership_id) from public.booking_assignees ba where ba.booking_id = b.id), '{}') as crew
+         from public.bookings b where b.series_id = $1 and b.status <> 'cancelled' order by b.scheduled_at`,
+      [s.series],
+    );
+    expect(rows[1]).toMatchObject({ id: s.visits[1], date: wednesday(1), crew: [] });
+    expect(rows[1].cover).toEqual([{ membership_id: s.anna.membershipId, other_booking_id: busy }]);
+    const later = rows.slice(2);
+    expect(later.length).toBeGreaterThanOrEqual(2);
+    for (const r of later) {
+      expect(weekday(r.date), r.date).toBe(3);
+      expect(r.crew, r.date).toEqual([s.anna.membershipId]);
+      expect(r.cover, r.date).toBeNull();
+    }
+  });
+
   it("this and all future, moved from 9:00 to 10:00: a skipped week stays out and a cancelled week stays cancelled", async () => {
     const s = await weeklySeries();
     // Week 2 was taken out with "Skip this one" (row gone, date on the

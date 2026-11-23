@@ -58,7 +58,7 @@ That visit is then marked **Needs cover**:
 
 Right after the save, a banner on the bookings list (or, from **Change crew**, a message in the pop-up) says per person how many visits and which dates. Open each marked visit and pick someone else; the mark clears once that visit's crew is saved. Nobody is notified about, or put on the calendar for, a visit they were left off. The nightly top-up does the same when a new visit clashes.
 
-This applies to a new series, an edit with **This and all future bookings**, and **Change crew** with **This and all future bookings**. Changing a series' days or time pattern, and **Make recurring**, still refuse on a clash and name the dates. A one-off booking with a clash is still refused.
+This applies to a new series, an edit with **This and all future bookings** (including one that moves the series to another day, time or frequency), and **Change crew** with **This and all future bookings**. **Make recurring** still refuses on a clash and names the dates, and so does moving a series whose crew is on their own split times. A one-off booking with a clash is still refused.
 
 ## Editing: just this visit, or this and future
 
