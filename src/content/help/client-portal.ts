@@ -3,7 +3,7 @@ import type { HelpArticle } from "./types";
 export const article: HelpArticle = {
   slug: "client-portal",
   title: "The client portal",
-  blurb: "Inviting clients, how they sign in, what each portal page lets them do, and what you see when they use it.",
+  blurb: "How clients get in with just their email, inviting them, what each portal page lets them do, and what you see when they use it.",
   section: "Website & portal",
   paths: [
     "/client/(portal)",
@@ -16,33 +16,44 @@ export const article: HelpArticle = {
   body: `
 The client portal is the client's own sign-in to Sollos. They see their visits and invoices, leave a note for the cleaner, skip a visit, pay, and ask for a new booking. It saves you phone calls: the small things reach you as tidy requests instead of interruptions.
 
+## How a client gets in
+
+Any client with an email address on file can get in, with no setup and no password:
+
+1. They go to **sollos3.com/client/login** and type the email you have for them.
+2. Sollos emails them a message from your company with one button, **Open my cleans**.
+3. They press it and they're in. The button works once, for an hour. Next time they ask for a new one the same way.
+
+If the email they type isn't the one on their profile, nothing arrives. That is on purpose: the page gives the same answer either way, so nobody can use it to find out who your clients are. If a client says no email came, check the address on their profile.
+
 ## Inviting a client
 
-Owners and admins invite clients from the client's profile:
+An invite is a way to send a client the link yourself. It is not needed for them to get in. Owners and admins invite clients from the client's profile:
 
 1. Make sure the client has an email address on file.
 2. On their profile, press **Invite to portal**. The same button is on the **Client portal** card on their edit page.
-3. Sollos emails them a **Set up your account** link and shows you the link in a **Portal invite sent** window, with **Copy**, so you can also text it to them.
+3. Sollos emails them an **Open my cleans** link and shows you the link in a **Portal invite sent** window, with **Copy**, so you can also text it to them. They open it, press one button, and they're in.
 
 The link works once, for 14 days. It's only shown in that window. Sending the invite again makes a new link and switches the old one off. The profile button tells you where things stand:
 
 - **Invite pending**: sent, not used yet. Press it to resend.
 - **Resend invite**: the invite expired.
-- **Portal active**: the client has set up their account.
+- **Portal active**: the client has been in at least once.
 
 To try the link yourself, open it in a private browser window. In your normal window you're signed in as staff, and the link will say so.
 
-## How a client signs in
+## The sign-in page
 
-**The first time**, the client opens the invite link and picks a password (at least 8 characters). If their email already has a Sollos login, they're asked to sign in with it instead. Opening the invite link while signed in with that same email connects the login to their portal. One login can only be the portal for one client.
+On sollos3.com/client/login:
 
-**After that**, they sign in at the client sign-in page, sollos3.com/client/login. They can also use the main Sollos sign-in page, which recognizes a client and sends them to their portal. On the client sign-in page:
+- **Email me a link** is the one main button. It is all most clients ever need.
+- **I have a password** is for clients who chose a password before November 2026. It switches to email and password, with **I forgot my password** to set a new one.
 
-- **Email me a sign-in link** is the default. The emailed link signs them in, and it expires in an hour. This suits clients who don't remember passwords.
-- **I have a password** switches to email and password.
-- **Forgot your password?** emails a link to set a new password.
+The Sollos front page and the staff sign-in page both point clients to it, under **Here to see your cleaner?**
 
-Archiving a client locks their portal sign-in. Restoring them unlocks it, with no new invite needed.
+One login opens one client record. If the same email is on file with two cleaning companies that use Sollos, the client sees the one that has had them longest.
+
+Archiving a client locks them out. Restoring them lets them back in, with nothing more to do.
 
 ## Home
 

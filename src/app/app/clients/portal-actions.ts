@@ -4,11 +4,10 @@ import { revalidatePath } from "next/cache";
 import { randomBytes, createHash } from "node:crypto";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import {
-  authUserExistsForEmail,
-  findClientByPortalToken,
-  linkPortalAccount,
-} from "@/lib/portal-claim";
+import { redirect } from "next/navigation";
+import { findClientByPortalToken } from "@/lib/portal-claim";
+import { signInFromInvite } from "@/lib/client-sign-in";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { logAuditEvent } from "@/lib/audit";
 import { sendOrgEmail } from "@/lib/email";
 
@@ -22,11 +21,6 @@ type Result =
   | {
       ok: false;
       error: string;
-      /** The refusal is "you already have an account" — the claim page turns
-       *  this into a Sign in button rather than telling them to navigate. */
-      signInInstead?: boolean;
-      /** Where "sign in" should go — back to this claim link once signed in. */
-      signInHref?: string;
     };
 
 const INVITE_TTL_DAYS = 14;
@@ -102,21 +96,21 @@ export async function invitePortalAction(formData: FormData): Promise<Result> {
     to: client.email,
     toName: client.name,
     pauseExempt: true,
-    subject: `Access your ${membership.organization_name} account`,
+    subject: `See your cleans with ${membership.organization_name}`,
     html: `
-      <p>Hi ${escapeHtml(client.name)},</p>
-      <p>${escapeHtml(membership.organization_name)} has invited you to their client portal. You can see your upcoming jobs, past service history, and outstanding invoices in one place.</p>
-      <p><a href="${claimUrl}" style="display:inline-block;padding:12px 24px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;font-weight:600;">Set up your account</a></p>
-      <p style="color:#666;font-size:13px;">Or paste this link into your browser: <br>${claimUrl}</p>
-      <p style="color:#666;font-size:13px;">This link expires in ${INVITE_TTL_DAYS} days.</p>
+      <p style="font-size:16px;">Hi ${escapeHtml(client.name)},</p>
+      <p style="font-size:16px;">${escapeHtml(membership.organization_name)} has set up a page for you. It shows your upcoming visits and your invoices, and lets you ask for a clean.</p>
+      <p><a href="${claimUrl}" style="display:inline-block;padding:14px 28px;background:#111827;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:16px;">Open my cleans</a></p>
+      <p style="color:#666;font-size:13px;">There is no password to set up. Or paste this link into your browser: <br>${claimUrl}</p>
+      <p style="color:#666;font-size:13px;">This link works for ${INVITE_TTL_DAYS} days. After that, go to ${siteUrl}/client/login and type this email address.</p>
     `,
     text: `Hi ${client.name},
 
-${membership.organization_name} has invited you to their client portal.
+${membership.organization_name} has set up a page for you. It shows your upcoming visits and your invoices, and lets you ask for a clean.
 
-Set up your account: ${claimUrl}
+Open it here (no password to set up): ${claimUrl}
 
-This link expires in ${INVITE_TTL_DAYS} days.`,
+This link works for ${INVITE_TTL_DAYS} days. After that, go to ${siteUrl}/client/login and type this email address.`,
   });
 
   await logAuditEvent({
@@ -134,57 +128,34 @@ This link expires in ${INVITE_TTL_DAYS} days.`,
 }
 
 /**
- * Public: the claim-page submit handler. Validates the token, creates
- * (or re-uses) an auth user with the supplied password, links the
- * client row, and burns the token.
+ * Public: the invite page's one button. The link in the email only opens the
+ * page; this press signs the client in and connects their record
+ * (lib/client-sign-in.ts signInFromInvite).
  *
- * Lives in this file (not a route handler) so it can be invoked from
- * the claim page's server action.
+ * Until 2026-11-22 this step asked the client to choose a password. Holding
+ * the invite proves the same thing a sign-in link does, that they can read
+ * the address it was sent to, so now it simply lets them in.
  */
-export async function acceptPortalInviteAction(
-  token: string,
-  password: string,
-): Promise<Result> {
-  if (password.length < 8) {
-    return { ok: false, error: "Password must be at least 8 characters." };
-  }
-
+export async function openPortalInviteAction(_prev: { error?: string }, formData: FormData): Promise<{ error?: string }> {
+  // Public and unauthenticated: a read that fails stops it, and is not
+  // taken for "no such invite" or "nobody holds this login".
+  enterFailClosed();
+  const token = String(formData.get("token") ?? "");
   const admin = createSupabaseAdminClient();
-  const found = await findClientByPortalToken(admin, token);
-  if (!found.ok) return { ok: false, error: found.error };
-  const { client } = found;
 
-  // An email match is NOT permission to set that account's password — and,
-  // since 2026-09-13, not permission to adopt the account either. Anyone
-  // can register any address against the auth project with the public key
-  // before the invite goes out; linking "the" existing account from this
-  // unauthenticated form handed the client's portal to whoever registered
-  // first. If a login exists, its holder proves it by signing in, and the
-  // claim page links a session whose email matches the invite.
-  if (await authUserExistsForEmail(admin, client.email)) {
-    return {
-      ok: false,
-      error:
-        "There is already a Sollos login for this email. Sign in with it, and this link will connect it to your portal.",
-      signInInstead: true,
-      signInHref: `/client/login?next=${encodeURIComponent(`/client/claim/${token}`)}`,
-    };
+  let result: Awaited<ReturnType<typeof signInFromInvite>>;
+  try {
+    const found = await findClientByPortalToken(admin, token);
+    if (!found.ok) return { error: found.error };
+    result = await signInFromInvite(found.client);
+  } catch (err) {
+    console.error("[portal-invite] could not sign the client in:", err);
+    return { error: "That didn't work. Press the button again, or ask your cleaner to send a new invite." };
   }
-
-  const { data: created, error: createErr } = await admin.auth.admin.createUser({
-    email: client.email,
-    password,
-    email_confirm: true,
-    user_metadata: { full_name: client.name, is_client: true },
-  });
-  if (createErr || !created.user) {
-    console.error("[portal-claim] createUser failed:", createErr?.message);
-    return { ok: false, error: "Could not create account. Try again, or ask for a new invite." };
+  if (!result.ok) {
+    return { error: "That didn't work. Press the button again, or ask your cleaner to send a new invite." };
   }
-
-  const linked = await linkPortalAccount(admin, client, created.user.id);
-  if (!linked.ok) return { ok: false, error: linked.error };
-  return { ok: true };
+  redirect("/client");
 }
 
 function escapeHtml(s: string): string {

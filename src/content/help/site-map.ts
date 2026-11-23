@@ -189,6 +189,7 @@ export const SITE_MAP: SitePage[] = [
   { path: "/client/(public)/login", name: "Client sign-in", where: "/client/login", area: "client" },
   { path: "/client/(public)/reset", name: "Client password reset", where: "Client sign-in → Forgot password", area: "client" },
   { path: "/client/(public)/claim/[token]", name: "Client portal invitation", where: "The link in a client's portal invite email", area: "client" },
+  { path: "/client/(public)/enter", name: "Open my cleans", where: "The button in a client's sign-in email", area: "client" },
 
   // ─── Links people receive ──────────────────────────────────────────
   { path: "/e/[token]", name: "Estimate (client view)", where: "The link in an estimate email", area: "public" },

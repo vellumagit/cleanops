@@ -110,6 +110,7 @@ export function MarketingFooter() {
             <FooterLink href="/blog">Blog</FooterLink>
             <FooterLink href="/signup">Start free trial</FooterLink>
             <FooterLink href="/login">Sign in</FooterLink>
+            <FooterLink href="/client/login">Client sign-in</FooterLink>
           </FooterColumn>
 
           {/* One landing page per kind of cleaning business */}
@@ -135,6 +136,14 @@ export function MarketingFooter() {
 
         <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6">
           <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} Sollos 3. All rights reserved.</p>
+          {/* The site sells to cleaning companies; their clients land here
+              too, looking for their cleaner. This is their door. */}
+          <p className="text-xs text-muted-foreground">
+            Here to see your cleaner?{" "}
+            <Link href="/client/login" className="font-medium text-foreground underline underline-offset-4">
+              See your cleans
+            </Link>
+          </p>
           <p className="text-xs text-muted-foreground">Made with care for the people who keep things clean.</p>
         </div>
       </div>

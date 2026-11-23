@@ -4,7 +4,7 @@
  * sign-in service's user list and create). Outbound email is caught.
  *
  *   the office invites a client      a link, emailed, good for 14 days
- *   the client sets up their login   from that link, once
+ *   (getting in from that link, or by email, is client-sign-in.api.test.ts)
  *   the client leaves a note         on their own visit; the crew is told
  *   the client asks for a booking    the office is told, and answers it
  *
@@ -116,9 +116,9 @@ async function visit(org: string, client: string, daysOut: number, opts: { crew?
 
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!hasPostgrest)("portal invite and setting up the login", { timeout: 120_000 }, () => {
-  it("the office invites; the link sets up one login, once; a link used, expired or for a taken email is refused in words", async () => {
-    const { invitePortalAction, acceptPortalInviteAction } = await import("@/app/app/clients/portal-actions");
+describe.skipIf(!hasPostgrest)("portal invite", { timeout: 120_000 }, () => {
+  it("the office invites: a link by email, good for 14 days, with no password to set up; only its hash is kept", async () => {
+    const { invitePortalAction } = await import("@/app/app/clients/portal-actions");
     const c = await company();
     const client = await addClient(api.sql, c.org, "Patricia Poohkay");
     const email = `patricia.${Date.now()}@example.test`;
@@ -148,35 +148,9 @@ describe.skipIf(!hasPostgrest)("portal invite and setting up the login", { timeo
     expect(stored.token).not.toBe(token); // only its hash is kept
     expect(stored.days).toBe(14);
 
-    expect(await asUser(null, () => acceptPortalInviteAction(token, "short"))).toEqual({ ok: false, error: "Password must be at least 8 characters." });
-    expect(await asUser(null, () => acceptPortalInviteAction(token, "a-good-long-password"))).toEqual({ ok: true });
-    const [linked] = await api.sql<{ profile: string | null; token: string | null; email: string }>(
-      "select c.profile_id as profile, c.portal_invite_token as token, u.email from public.clients c join auth.users u on u.id = c.profile_id where c.id = $1",
-      [client],
-    );
-    expect(linked).toMatchObject({ token: null, email });
-    expect(((await asUser(null, () => acceptPortalInviteAction(token, "a-good-long-password"))) as { ok: boolean }).ok).toBe(false);
-
-    // Expired.
-    const late = await addClient(api.sql, c.org, "Late Client");
-    await api.sql("update public.clients set email = $2 where id = $1", [late, `late.${Date.now()}@example.test`]);
-    await asUser(c.owner.userId, () => invitePortalAction(form({ client_id: late })));
-    const lateToken = /\/client\/claim\/([A-Za-z0-9_-]+)/.exec(outbox.email.at(-1)!.text ?? "")![1];
-    await api.sql("update public.clients set portal_invite_expires_at = now() - interval '1 day' where id = $1", [late]);
-    expect(await asUser(null, () => acceptPortalInviteAction(lateToken, "a-good-long-password"))).toEqual({
-      ok: false,
-      error: "This invite has expired. Ask for a new one.",
-    });
-
-    // Someone already has a login with this email: they sign in instead; no password is set for them.
-    const taken = await addClient(api.sql, c.org, "Taken Email");
-    const takenEmail = `taken.${Date.now()}@example.test`;
-    await api.sql("update public.clients set email = $2 where id = $1", [taken, takenEmail]);
-    await api.sql("insert into auth.users (email, raw_user_meta_data) values ($1, '{}'::jsonb)", [takenEmail]);
-    await asUser(c.owner.userId, () => invitePortalAction(form({ client_id: taken })));
-    const takenToken = /\/client\/claim\/([A-Za-z0-9_-]+)/.exec(outbox.email.at(-1)!.text ?? "")![1];
-    expect(await asUser(null, () => acceptPortalInviteAction(takenToken, "a-good-long-password"))).toMatchObject({ ok: false, signInInstead: true });
-    expect((await api.sql<{ p: string | null }>("select profile_id as p from public.clients where id = $1", [taken]))[0].p).toBeNull();
+    expect(mail!.subject).toMatch(/^See your cleans with Portal Co \d+$/);
+    expect(mail!.text).toContain("no password to set up");
+    expect(mail!.text).not.toMatch(/set up your account|pick a password/i);
   });
 });
 

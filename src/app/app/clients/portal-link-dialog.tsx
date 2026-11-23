@@ -80,9 +80,9 @@ export function PortalLinkDialog({
             </Button>
           </div>
           <ol className="list-decimal space-y-1 pl-5 text-xs text-muted-foreground">
-            <li>The client opens the link and picks a password.</li>
+            <li>The client opens the link and presses one button. There is no password to set up.</li>
             <li>
-              After that they sign in at{" "}
+              After that, or without any invite, they get in by typing the email you have for them at{" "}
               <span className="font-mono text-foreground">{signIn.replace(/^https?:\/\//, "")}</span>.
             </li>
             <li>

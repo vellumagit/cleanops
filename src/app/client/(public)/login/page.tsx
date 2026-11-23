@@ -2,8 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getClientAuthState } from "@/lib/client-auth";
 import { ClientLoginForm } from "./login-form";
+import { ClientDoor, DoorNote } from "../door";
 
-export const metadata = { title: "Client sign-in" };
+export const metadata = { title: "See your cleans" };
 
 function safePortalNext(raw: string | undefined): string | null {
   if (!raw) return null;
@@ -14,105 +15,57 @@ function safePortalNext(raw: string | undefined): string | null {
   return raw;
 }
 
-// Standalone page — render without the tab-bar layout.
+/** What a link that didn't work says, by the reason the link page gave. */
+const LINK_NOTES: Record<string, string> = {
+  expired: "That button has already been used, or is more than an hour old. Ask for a new one below; it only takes a moment.",
+  "no-client":
+    "That email isn't on a cleaner's list any more. If that seems wrong, call your cleaner and ask them to check the email they have for you.",
+  wait: "That's a lot of tries. Wait a few minutes, then ask for a new link below.",
+};
+
+/**
+ * The client's way in: their email, one button (./login-form.tsx).
+ *
+ * Standalone, without the client area's tab bar.
+ */
 export default async function ClientLoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ claimed?: string; next?: string }>;
+  searchParams: Promise<{ next?: string; link?: string; auth_error?: string }>;
 }) {
-  const { claimed, next: rawNext } = await searchParams;
-  // Only a portal path, and only a plain one. The claim page sends people
-  // here when the invite's address already has a login; after sign-in they
-  // go back to the claim link, which connects the session to the client.
+  const { next: rawNext, link, auth_error: authError } = await searchParams;
+  // Only a plain path inside the client area.
   const next = safePortalNext(rawNext);
 
   const state = await getClientAuthState();
   if (state.status === "ok") redirect(next ?? "/client");
-  // Signed in with a login no client row points at yet — the very case the
-  // claim page resolves. Send them back there instead of the dead end below.
+  // Signed in with a login no client record points at yet, on the way to an
+  // invite link: go back to it, which connects the two.
   if (state.status === "not-a-client" && next) redirect(next);
 
-  return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-muted/30 px-4">
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-sm">
-        <div className="mb-4 text-center">
-          <h1 className="text-xl font-bold">Client sign-in</h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Sign in with the email + password you set up when you claimed your
-            account.
-          </p>
-        </div>
+  const note = (link && LINK_NOTES[link]) || (authError ? LINK_NOTES.expired : null);
 
-        {/* Claiming can adopt an auth account that already existed, in which
-            case the password typed on the claim page was deliberately never
-            applied. Saying so here is the difference between signing in and
-            trying a password that was never set. */}
-        {claimed === "existing" && (
-          <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-            Your account is linked. This email already had a login, so use the
-            password you already have — the one you just typed was not applied.
-            Or just have a sign-in link emailed to you below.
-          </div>
+  return (
+    <ClientDoor title="See your cleans" lede="Your visits, your invoices, and a way to ask for a clean.">
+      <div className="space-y-4">
+        {note && <DoorNote>{note}</DoorNote>}
+        {/* Signed in as someone who isn't a client (staff, most often). The
+            form below still works: the link signs this browser in as the
+            client. Saying who they are now saves a confused minute. */}
+        {state.status === "not-a-client" && (
+          <DoorNote>
+            You&rsquo;re signed in{state.email ? <> as <strong className="[overflow-wrap:anywhere]">{state.email}</strong></> : null},
+            which isn&rsquo;t a client login. To see your cleans, type the email your cleaner has for you.
+          </DoorNote>
         )}
-        {claimed === "1" && (
-          <div className="mb-4 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-200">
-            Account created. Sign in with the password you just chose.
-          </div>
-        )}
-        {/* Signed in, but no client row points at this account. Rendering the
-            sign-in form here is what produced an endless loop: the person
-            authenticates correctly, gets bounced, and signs in again. Say what
-            is actually wrong and give them the way out. */}
-        {state.status === "not-a-client" ? (
-          <div className="space-y-3">
-            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-              <p className="font-semibold">
-                You&rsquo;re signed in, but not as a client.
-              </p>
-              <p className="mt-1 text-[13px]">
-                {state.email ? `${state.email} ` : "This account "}
-                is a valid login, but it isn&rsquo;t linked to a client account
-                yet. Ask the cleaning company to send you a portal invite — or
-                sign out and use the email your invite was sent to.
-              </p>
-            </div>
-            {/* A form, never a link — /auth/logout is POST-only precisely
-                because Next's prefetcher would otherwise sign people out the
-                moment the button scrolled into view. */}
-            <form method="POST" action="/auth/logout">
-              <input type="hidden" name="next" value="/client/login" />
-              <button
-                type="submit"
-                className="flex h-10 w-full items-center justify-center rounded-md border border-border text-sm font-semibold transition-all hover:bg-muted active:scale-[0.98] active:bg-muted"
-              >
-                Sign out
-              </button>
-            </form>
-          </div>
-        ) : (
-          <ClientLoginForm next={next} />
-        )}
-        <p className="mt-4 text-center text-[11px] text-muted-foreground">
-          Work for the cleaning company?{" "}
-          <Link
-            href="/login"
-            className="text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
-          >
-            Staff sign-in
-          </Link>
-          .
-        </p>
-        <p className="mt-1 text-center text-[11px] text-muted-foreground">
-          Don&rsquo;t have an account?{" "}
-          <Link
-            href="/"
-            className="text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
-          >
-            Ask the cleaning company for an invite
-          </Link>
-          .
-        </p>
+        <ClientLoginForm next={next} />
       </div>
-    </div>
+      <p className="mt-8 border-t border-border pt-4 text-sm text-muted-foreground">
+        Work for the cleaning company?{" "}
+        <Link href="/login" className="font-medium text-foreground underline underline-offset-4">
+          Staff sign-in
+        </Link>
+      </p>
+    </ClientDoor>
   );
 }

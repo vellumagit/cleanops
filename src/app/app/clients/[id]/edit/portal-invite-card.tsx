@@ -115,10 +115,11 @@ export function PortalInviteCard({
       ) : (
         <div>
           <p className="mb-3 text-xs text-muted-foreground">
-            Give this client their own sign-in to see upcoming visits, past
-            visits and invoices, and to ask for a visit. Inviting emails them
-            a link and shows it to you to copy; they pick a password, then
-            sign in at sollos3.com/client/login.
+            This client can already see their upcoming visits, past visits
+            and invoices, and ask for a visit: they go to
+            sollos3.com/client/login and type the email above. Inviting just
+            sends them the link, and shows it to you to copy. There is no
+            password for them to set up.
           </p>
           <Button
             type="button"

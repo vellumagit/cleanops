@@ -191,13 +191,13 @@ export default async function LoginPage({
         {/* Clients have their own door. Nothing here said so, and a client
             who signed in on this page with a staff login landed in the
             office. */}
-        <p className="mt-2 text-center text-sm text-muted-foreground">
-          A client of a cleaning company?{" "}
+        <p className="mt-4 rounded-lg border border-border bg-muted/40 px-4 py-3 text-center text-sm text-muted-foreground">
+          Here to see your cleaner? This page is for the cleaning company&rsquo;s staff.{" "}
           <Link
             href="/client/login"
-            className="font-medium text-foreground underline-offset-4 hover:underline"
+            className="font-semibold text-foreground underline underline-offset-4"
           >
-            Client sign-in
+            See your cleans
           </Link>
         </p>
       </div>

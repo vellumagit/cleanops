@@ -49,7 +49,7 @@ export async function findClientByPortalToken(
   if (client.profile_id) {
     return {
       ok: false,
-      error: "This invite has already been used. Log in with the email + password you set.",
+      error: "This invite has already been used. To get in, go to the sign-in page and type your email: we'll send you a link.",
     };
   }
   if (!client.email) {

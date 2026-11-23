@@ -13,6 +13,73 @@ Reference points: Acuity and Jane.
 Everything here is off for a company until it switches it on, so each phase can
 ship and be tried on Velluma without touching Svit.
 
+## How a client gets in
+
+Decided 2026-11-22. The aim is that a client of any age never has to
+remember an address or a password, and never has to be "set up" first.
+
+### Three doors, one place
+
+1. **The link in a message they already have.** Every email and text a client
+   gets about a visit, an invoice or an estimate carries one button that
+   opens that exact thing. No sign-in. This is the door most people will use,
+   because they are already looking at the message.
+2. **The cleaner's own page**, `sollos3.com/book/<name>`. The company's logo
+   and two large buttons: **Book a clean** and **My cleans**. This is what
+   goes on the cleaner's website, cards and fridge magnets.
+3. **The Sollos front page**, for someone who only remembers "it's that
+   Sollos thing". One line, "Here to see your cleaner?", leads to a page that
+   asks for their email and nothing else.
+
+All three end in the same client area.
+
+### Signing in without a password
+
+- The client types their email. They get an email with one button. Pressing
+  it signs them in. There is no password to choose, remember or reset.
+- If the email is on file with two companies, they are asked which one.
+- A text message with a 6-digit code is the same idea for people who live in
+  their texts; it comes after the email version.
+
+### What has to change from today
+
+Today's portal is close but has two gates that get in the way:
+
+- **A client must be invited first.** Only a client the office has invited
+  can sign in; anyone else types their email and nothing happens. Change: any
+  client whose email is on the company's books can sign in. Proving they own
+  the email is the permission. The invite button stays, as a way to send the
+  link, not as a gate.
+- **The first visit asks for a password.** The invite link opens a "choose a
+  password" page. Change: the invite link signs them straight in. A password
+  stays possible for the few who want one, behind "sign in another way".
+
+Nothing is lost on safety: a link sent to an email address already proves
+more than a password someone picked.
+
+### What they can do without signing in at all
+
+From the private link in a message, for that one item only:
+
+- a visit: see when it is and who is coming, confirm it, ask to move or
+  cancel it
+- an invoice: see it, pay it, tip (exists today)
+- an estimate: approve or decline it (exists today)
+
+Signing in is only needed to see everything together: all visits, all
+invoices, saved addresses, booking again.
+
+### Rules for the screens
+
+- One job per screen, one main button per screen.
+- Large text and buttons; made for a phone held in one hand.
+- The company's name, logo and colour throughout. Sollos is not the brand
+  the client sees.
+- Plain words: "My cleans", "Book a clean", "Pay". No "portal", no
+  "dashboard", no "account".
+- Every screen says who to call, with the company's phone number, for anyone
+  who would rather talk to a person.
+
 ## Nothing is created automatically
 
 Decided 2026-11-19. A company has no booking page until it goes and makes one.
@@ -116,6 +183,24 @@ office turns it into a series. Revisit in phase 6.
 ## Phases
 
 Each phase ends in something usable and is tested before the next starts.
+
+### Phase 0: the front doors (small to medium, do first)
+
+Makes what exists today easy to get into, before anything new is offered.
+See "How a client gets in".
+
+- Sign in by emailed link for any client on the books: no invite needed, no
+  password asked for.
+- The invite link signs the client straight in.
+- "Manage this visit" in every booking email and text: a private link to
+  that visit, where the client can confirm it or ask to move or cancel it.
+  Asking sends the office a request; picking a new time themselves comes
+  with phase 4, once open times exist.
+- "Here to see your cleaner?" on the Sollos front page.
+- The client area reworded and resized to the screen rules above.
+
+Needs no slot logic and no company page, so it helps Svit's existing
+clients straight away.
 
 ### Phase 1: the company page, with requests (small)
 
