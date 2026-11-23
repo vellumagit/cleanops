@@ -40,7 +40,7 @@ export default async function ClientInvoicesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold">My invoices</h1>
+        <h1 className="text-2xl font-bold">My invoices</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Open, paid, or voided — the full history.
         </p>

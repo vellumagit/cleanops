@@ -4,13 +4,14 @@ import { requireClient } from "@/lib/client-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   formatCurrencyCents,
+  formatDate,
   formatDateTime,
   humanizeEnum,
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
-export const metadata = { title: "Your dashboard" };
+export const metadata = { title: "Your cleans" };
 
 export default async function ClientDashboardPage() {
   const client = await requireClient();
@@ -49,15 +50,15 @@ export default async function ClientDashboardPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Hi, {client.name.split(" ")[0]}.</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Here&rsquo;s what&rsquo;s happening with your account.
+        <p className="mt-1 text-base text-muted-foreground">
+          Your next cleans, and anything there is to pay.
         </p>
       </div>
 
       {/* Reviews are pull-first: asking is rare (org-configured cadence),
           volunteering is always one tap away on any finished visit. */}
       <section className="rounded-lg border border-border bg-card px-4 py-3">
-        <p className="text-sm">
+        <p className="text-base">
           <span className="font-medium">Want to tell us how we did?</span>{" "}
           <span className="text-muted-foreground">
             Every finished visit in{" "}
@@ -67,7 +68,7 @@ export default async function ClientDashboardPage() {
             >
               your cleans
             </Link>{" "}
-            has a leave-a-review link — anytime, no waiting to be asked.
+            has a link to leave a review, whenever you like.
           </span>
         </p>
       </section>
@@ -75,20 +76,24 @@ export default async function ClientDashboardPage() {
       {/* Upcoming jobs */}
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
             <Calendar className="h-4 w-4 text-violet-500" />
             Upcoming cleans
           </h2>
           <Link
             href="/client/jobs"
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground active:text-foreground active:underline"
+            className="text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground active:text-foreground active:underline"
           >
             See all →
           </Link>
         </div>
         {(upcoming.data ?? []).length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-card p-5 text-center text-sm text-muted-foreground">
-            No upcoming cleans scheduled.
+          <div className="rounded-lg border border-dashed border-border bg-card p-5 text-center text-base text-muted-foreground">
+            No cleans are booked right now.{" "}
+            <Link href="/client/request" className="font-medium text-foreground underline underline-offset-4">
+              Ask for one
+            </Link>
+            .
           </div>
         ) : (
           <ul className="space-y-2">
@@ -103,11 +108,10 @@ export default async function ClientDashboardPage() {
                   className="tap-row flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-foreground/30"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium">
+                    {/* When first: it is the thing a client is looking for. */}
+                    <p className="text-base font-semibold">{formatDateTime(b.scheduled_at, tz)}</p>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
                       {b.service_type_label ?? humanizeEnum(b.service_type)}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {formatDateTime(b.scheduled_at, tz)}
                       {b.address ? ` · ${b.address}` : ""}
                     </p>
                   </div>
@@ -125,19 +129,19 @@ export default async function ClientDashboardPage() {
           itself is also clickable for people used to tapping cards. */}
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
             <Receipt className="h-4 w-4 text-emerald-500" />
-            Outstanding invoices
+            To pay
           </h2>
           <Link
             href="/client/invoices"
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground active:text-foreground active:underline"
+            className="text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground active:text-foreground active:underline"
           >
             See all →
           </Link>
         </div>
         {(outstanding.data ?? []).length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-card p-5 text-center text-sm text-muted-foreground">
+          <div className="rounded-lg border border-dashed border-border bg-card p-5 text-center text-base text-muted-foreground">
             Nothing to pay right now.
           </div>
         ) : (
@@ -148,21 +152,21 @@ export default async function ClientDashboardPage() {
                 className="tap-row flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-foreground/30"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium tabular-nums">
+                  <p className="text-base font-semibold tabular-nums">
                     {formatCurrencyCents(inv.amount_cents, currency)}
                   </p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()} ·{" "}
-                    {humanizeEnum(inv.status)}
-                    {inv.due_date ? ` · due ${inv.due_date}` : ""}
+                  <p className="mt-0.5 text-sm text-muted-foreground">
+                    Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}
+                    {inv.status === "overdue" ? " · overdue" : inv.status === "partially_paid" ? " · part paid" : ""}
+                    {inv.due_date ? ` · due ${formatDate(inv.due_date, tz)}` : ""}
                   </p>
                 </div>
                 {inv.public_token ? (
                   <Link
                     href={`/i/${inv.public_token}`}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background transition-all hover:opacity-90 active:scale-95 active:opacity-80"
+                    className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-foreground px-4 text-sm font-semibold text-background transition-all hover:opacity-90 active:scale-95 active:opacity-80"
                   >
-                    <CreditCard className="h-3.5 w-3.5" />
+                    <CreditCard className="h-4 w-4" />
                     Pay now
                   </Link>
                 ) : (

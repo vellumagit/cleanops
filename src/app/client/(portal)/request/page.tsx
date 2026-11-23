@@ -2,7 +2,7 @@ import { requireClient } from "@/lib/client-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { RequestForm } from "./request-form";
 
-export const metadata = { title: "Request a booking" };
+export const metadata = { title: "Ask for a clean" };
 
 export default async function ClientRequestPage() {
   const client = await requireClient();
@@ -40,7 +40,7 @@ export default async function ClientRequestPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold">Request a booking</h1>
+        <h1 className="text-2xl font-bold">Ask for a clean</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Tell us what you need and when — we&rsquo;ll confirm details and put
           it on the calendar.

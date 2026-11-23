@@ -1,6 +1,7 @@
 import { LogOut } from "lucide-react";
 import { ClientTabBar } from "./tab-bar";
 import { getCurrentClient } from "@/lib/client-auth";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 /**
  * Client portal shell. Top header with org name + logout, bottom tab
@@ -21,34 +22,57 @@ export default async function ClientLayout({
   // alongside and use their own layouts to skip this shell.
   const client = await getCurrentClient();
 
+  // The company's phone number, for anyone who would rather talk to a
+  // person. Read past RLS (a client can't read organizations) and only
+  // this one field. Never worth failing the page over.
+  let phone: string | null = null;
+  if (client) {
+    try {
+      const { data } = (await createSupabaseAdminClient()
+        .from("organizations")
+        .select("contact_phone" as never)
+        .eq("id", client.organization_id)
+        .maybeSingle()) as unknown as { data: { contact_phone: string | null } | null };
+      phone = data?.contact_phone?.trim() || null;
+    } catch {
+      phone = null;
+    }
+  }
+
   // If we rendered this layout, the viewer is authenticated as a
   // client. Children still call requireClient for belt-and-braces.
   return (
     <div className="flex min-h-[100dvh] flex-col bg-muted/30">
       <header className="sticky top-0 z-20 border-b border-border bg-card px-4 py-3 supports-[backdrop-filter]:bg-card/80 supports-[backdrop-filter]:backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="mx-auto flex max-w-3xl items-center justify-between">
-          <div className="flex min-w-0 flex-col leading-snug">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Client portal
-            </span>
-            <span className="truncate text-sm font-semibold">
-              {client?.organization_name ?? "—"}
-            </span>
-          </div>
+          {/* The cleaner's own name. A client knows their cleaner; "client
+              portal" and "Sollos" mean nothing to them. */}
+          <span className="min-w-0 truncate text-base font-semibold">
+            {client?.organization_name ?? "—"}
+          </span>
           <form action="/auth/logout" method="post">
             <button
               type="submit"
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-muted active:text-foreground"
+              className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-muted active:text-foreground"
             >
-              <LogOut className="h-3.5 w-3.5" />
+              <LogOut className="h-4 w-4" />
               Sign out
             </button>
           </form>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-24 pt-5">
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 pb-28 pt-5">
         {children}
+        {phone && client && (
+          <p className="mt-8 border-t border-border pt-4 text-base text-muted-foreground">
+            Rather talk to someone? Call {client.organization_name} at{" "}
+            <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} className="font-semibold text-foreground underline underline-offset-4">
+              {phone}
+            </a>
+            .
+          </p>
+        )}
       </main>
 
       <ClientTabBar />

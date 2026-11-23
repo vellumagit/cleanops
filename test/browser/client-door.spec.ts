@@ -184,3 +184,60 @@ describe("the private link to one visit", () => {
     }
   });
 });
+
+/**
+ * Inside, once signed in: the cleaner's name on top, a client's own words on
+ * the tabs, and the same three things to do about a visit.
+ */
+describe("the client area, signed in", () => {
+  it("reads in plain words at phone width, and a visit can be asked to move", async () => {
+    const c = await company(stack, "Inside");
+    await stack.api.sql("update public.organizations set contact_phone = '(780) 555-0199' where id = $1", [c.org]);
+    const [{ name: companyName }] = await stack.api.sql<{ name: string }>("select name from public.organizations where id = $1", [c.org]);
+    const [user] = await stack.api.sql<{ id: string }>(
+      "insert into auth.users (email, raw_user_meta_data) values ($1, '{}'::jsonb) returning id",
+      [`inside.${Date.now()}@example.test`],
+    );
+    await stack.api.sql("update public.clients set profile_id = $2 where id = $1", [c.client, user.id]);
+    const when = new Date(daysFromNow(5));
+    when.setUTCHours(16, 0, 0, 0);
+    const id = await job(stack, c, { at: when.toISOString(), minutes: 120, crew: [c.anna] });
+
+    const s = await signedOut();
+    try {
+      await s.page.setViewport({ width: 390, height: 844 });
+      for (const cookie of stack.api.sessionCookies(user.id, "inside@example.test")) {
+        await s.page.setCookie({ name: cookie.name, value: cookie.value, url: stack.base });
+      }
+      await visit(stack, s.page, "/client");
+      const home = await says(s.page, "Your next cleans, and anything there is to pay.");
+      expect(home).toContain(companyName);
+      expect(home).not.toMatch(/client portal|dashboard|account/i);
+      for (const tab of ["Home", "My cleans", "New clean", "Invoices"]) expect(home).toContain(tab);
+      expect(home).toContain("(780) 555-0199");
+      expect(await overflow(s.page), "no sideways scroll on a phone").toBeLessThanOrEqual(1);
+
+      await visit(stack, s.page, `/client/jobs/${id}`);
+      await click(s.page, "Ask to move this visit");
+      await fill(s.page, "textarea[name='wish']", "Friday afternoon instead");
+      await click(s.page, "Ask to move it");
+      await says(s.page, /The office will be in touch about a new time/);
+      const asked = await stack.api.sql<{ body: string; status: string }>(
+        "select body, status from public.client_job_requests where booking_id = $1",
+        [id],
+      );
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({ status: "open" });
+      expect(asked[0].body).toContain("Friday afternoon instead");
+      expect(await overflow(s.page)).toBeLessThanOrEqual(1);
+
+      for (const path of ["/client/jobs", "/client/request", "/client/invoices"]) {
+        await visit(stack, s.page, path);
+        expect(await overflow(s.page), path).toBeLessThanOrEqual(1);
+      }
+      expect(s.errors).toEqual([]);
+    } finally {
+      await s.close();
+    }
+  });
+});

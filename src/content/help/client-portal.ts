@@ -60,22 +60,22 @@ Archiving a client locks them out. Restoring them lets them back in, with nothin
 The home screen greets the client by first name and shows:
 
 - **Upcoming cleans**: their next three confirmed visits. Each one opens the visit.
-- **Outstanding invoices**: up to three invoices still owing, each with a **Pay now** button.
+- **To pay**: up to three invoices still owing, each with a **Pay now** button.
 - A reminder that every finished visit has a link to leave a review.
 
-The tabs along the bottom are **Home**, **Jobs**, **Request**, and **Invoices**.
+The tabs along the bottom are **Home**, **My cleans**, **New clean**, and **Invoices**. The top of every page shows your company's name, and the bottom shows your phone number (from Settings, Email & contact) for a client who would rather call.
 
 > Clients never see **Pending** visits. Pending means you've pencilled a job in but haven't committed to it, such as the placeholder from an approved estimate. A visit appears in the portal once it's confirmed.
 
-## Jobs
+## My cleans
 
-**My cleaning jobs** lists **Upcoming** and **Past** visits with the date and time, service, length, address, and status. Cancelled visits show as cancelled. A finished visit has a **Leave a review** link. Once the client has left a review, their stars show instead (see [Reviews](help:reviews)).
+**My cleans** lists **Upcoming** and **Past** visits with the date and time, service, length, address, and status. Cancelled visits show as cancelled. A finished visit has a **Leave a review** link. Once the client has left a review, their stars show instead (see [Reviews](help:reviews)).
 
 ## A visit
 
 Tapping a visit shows the service, status, date and time, roughly how long it takes, the address, and who's coming (**Your cleaner** or **Your cleaners**). Visits that aren't cancelled have **Add to Google Calendar** and **Apple / Outlook (.ics)** links.
 
-For a confirmed or pending visit that hasn't started, the client has two buttons.
+For a confirmed or pending visit that hasn't started, the client has three buttons.
 
 **Leave a note for this visit.** For example, "Please skip the bathroom this week, it's just been redone." The note:
 
@@ -86,6 +86,12 @@ For a confirmed or pending visit that hasn't started, the client has two buttons
 
 Notes can be up to 1,000 characters. A note that looks like a card number is refused.
 
+**Ask to move this visit.** The client writes when would suit them better. Nothing changes on the schedule:
+
+- It lands on your [Requests](/app/bookings/requests) page as an open question, with their words.
+- Owners, admins, and managers get a notification and an email.
+- The crew is not told. The visit goes ahead as booked until you move it.
+
 **Skip a visit.** What happens depends on how soon the visit is:
 
 - **48 hours or more away**: the button reads **Skip this cleaning**. The visit is cancelled straight away. You get a notification, and so does the assigned crew. It comes off the calendars, and the rest of a recurring schedule carries on as normal.
@@ -95,9 +101,17 @@ Under **What you've told us**, the client sees their past notes and skip request
 
 Once a visit has started, finished, or been cancelled, the buttons are gone and the client sees why: for example, "Your cleaner has already started. Call the office if you need to change something now."
 
-## Request a booking
+## The button in booking emails
 
-On the **Request** tab, the client fills in:
+Every booking confirmation, day-before reminder, and reschedule email has a **See or change this visit** button. It opens that one visit with no sign-in: when it is, what it is, where, and who's coming, under your company's name. From there the client has the same three choices as above: leave a note, ask to move it, or cancel it.
+
+- The link opens that visit and nothing else. To see everything, the client signs in with their email.
+- It stops working a week after the visit, and straight away if you archive the client.
+- Texts don't carry the link, only emails.
+
+## Ask for a clean
+
+On the **New clean** tab, the client fills in:
 
 - **What do you need cleaned?** (required). It starts filled in with the service from their last booking.
 - **Preferred date** and **Preferred time**: **Flexible**, **Morning**, **Afternoon**, or **Evening**.

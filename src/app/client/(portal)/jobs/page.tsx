@@ -10,7 +10,7 @@ import {
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
-export const metadata = { title: "My jobs" };
+export const metadata = { title: "My cleans" };
 
 export default async function ClientJobsPage() {
   const client = await requireClient();
@@ -73,7 +73,7 @@ export default async function ClientJobsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-bold">My cleaning jobs</h1>
+        <h1 className="text-2xl font-bold">My cleans</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Every visit, upcoming or past.
         </p>

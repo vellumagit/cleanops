@@ -25,8 +25,8 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/client", label: "Home", icon: Home },
-  { href: "/client/jobs", label: "Jobs", icon: Briefcase },
-  { href: "/client/request", label: "Request", icon: CalendarPlus },
+  { href: "/client/jobs", label: "My cleans", icon: Briefcase },
+  { href: "/client/request", label: "New clean", icon: CalendarPlus },
   { href: "/client/invoices", label: "Invoices", icon: Receipt },
 ];
 
@@ -63,7 +63,7 @@ export function ClientTabBar() {
                 href={item.href}
                 aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "relative flex flex-col items-center gap-1 py-2.5 text-xs font-medium",
+                  "relative flex min-h-14 flex-col items-center justify-center gap-1 py-2 text-[13px] font-medium",
                   "transition-colors duration-100",
                   // The pressed state is the whole point: it fires on
                   // touchdown, so the tap is acknowledged before the network
