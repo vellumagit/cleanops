@@ -2,8 +2,9 @@
 
 Written 2026-11-19.
 
-Status, 2026-11-22: **phases 0 to 4 are built.** Phase 5 (money) is next.
-What each built phase left out is listed under it.
+Status, 2026-11-22: **phases 0 to 4 are built.** Phase 5 (paying at booking)
+was dropped the same day: see under it. Phase 6 (reach) is what is left, each
+item on its own. What each built phase left out is listed under it.
 
 ## The goal
 
@@ -124,7 +125,7 @@ Three states, then: not set up, draft, published.
 | Requests from the portal and an office screen to approve them | `booking_requests`, `/app/bookings/requests` | approval mode |
 | Public forms with spam protection | `/api/contact-request`, honeypot, rate limits, Turnstile on signup | guest form safety |
 | Confirmation, reminder, reschedule and cancel emails and texts | `src/lib/email-templates.ts`, `src/lib/twilio.ts` | after booking |
-| Online card payment, on invoices only | Stripe Connect, `/i/[token]` | deposits later |
+| Online card payment, on invoices only | Stripe Connect, `/i/[token]` | how an online booking is paid: by its invoice |
 
 ## What is missing
 
@@ -137,7 +138,7 @@ Three states, then: not set up, draft, published.
 5. A service area. The company has no address or area on file.
 6. A way for the client to reschedule or cancel from a link. Today's
    confirmation says "reply to this email".
-7. Taking a deposit or card at booking time.
+7. Taking a deposit or card at booking time. (Decided against, 2026-11-22.)
 
 ## The hard parts
 
@@ -353,15 +354,26 @@ Left out of phase 4:
   be moved by the client.
 - A moved visit in a series is one visit moved; the series is untouched.
 - Text messages don't carry the link; emails do.
-- No fee or policy text for late changes (phase 5).
+- No fee or policy text for late changes.
 
-### Phase 5: money (medium)
+### Phase 5: money (DROPPED 2026-11-22)
 
-- Optional deposit or full payment at booking through the company's Stripe
-  connection; the visit is held unpaid for a few minutes, then released.
-- A cancellation policy shown before paying; what happens to the deposit on a
-  late cancel is the company's setting.
-- Square is not covered in this phase.
+Decided by Brian, 2026-11-22: nobody pays up front. A visit booked online is
+an ordinary booking, and it is invoiced the way every other booking is
+(drafted when the job is finished, or by the monthly run, as the company has
+it set). No deposit, no card at booking, no held-unpaid state, no deposit
+rules for a late cancel.
+
+What that leaves true today, with no further work:
+
+- The visit carries the service's price from Settings, Services, whatever
+  the page showed the visitor, so its invoice has a figure.
+- A service with no price set books at 0. The office sets the price on the
+  visit before it is invoiced, as for any other booking.
+
+The original plan, for the record: an optional deposit or full payment at
+booking through the company's Stripe connection, with a cancellation policy
+shown before paying.
 
 ### Phase 6: reach (each item separate)
 
