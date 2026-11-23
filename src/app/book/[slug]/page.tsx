@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
-import { publicBookingPage } from "@/lib/booking-page";
+import { canBookTime, publicBookingPage } from "@/lib/booking-page";
 import { publicPrice } from "@/lib/booking-page-rules";
 import { formatCurrencyCents } from "@/lib/format";
 import { brandButtonColors } from "@/lib/readable-on";
@@ -51,6 +51,9 @@ export default async function BookingPage({ params }: { params: Promise<{ slug: 
   const { page, company, services, preview } = found;
   const button = brandButtonColors(company.brand_color);
   const money = (cents: number) => formatCurrencyCents(cents, company.currency as "CAD" | "USD");
+  // "Book a clean" is there only when the company switched it on and has
+  // something on the page with a length to book.
+  const canBook = page.time_booking !== "off" && services.some(canBookTime);
 
   return (
     <Frame>
@@ -72,11 +75,24 @@ export default async function BookingPage({ params }: { params: Promise<{ slug: 
       <h1 className="mt-6 text-balance text-3xl font-bold tracking-tight">{page.headline || company.name}</h1>
       {page.intro && <p className="mt-3 whitespace-pre-line text-base text-muted-foreground">{page.intro}</p>}
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+      {canBook && (
+        <Link
+          href={`/book/${page.slug}/time`}
+          style={{ ...button, borderWidth: 1, borderStyle: "solid" }}
+          className="mt-6 flex min-h-14 items-center justify-center rounded-xl px-5 text-lg font-semibold transition-opacity hover:opacity-90"
+        >
+          Book a clean
+        </Link>
+      )}
+      <div className={`${canBook ? "mt-3" : "mt-6"} grid gap-3 sm:grid-cols-2`}>
         <a
           href="#ask"
-          style={{ ...button, borderWidth: 1, borderStyle: "solid" }}
-          className="flex min-h-14 items-center justify-center rounded-xl px-5 text-lg font-semibold transition-opacity hover:opacity-90"
+          style={canBook ? undefined : { ...button, borderWidth: 1, borderStyle: "solid" }}
+          className={
+            canBook
+              ? "flex min-h-14 items-center justify-center rounded-xl border border-border bg-card px-5 text-lg font-semibold transition-colors hover:bg-muted"
+              : "flex min-h-14 items-center justify-center rounded-xl px-5 text-lg font-semibold transition-opacity hover:opacity-90"
+          }
         >
           Ask for a clean
         </a>
@@ -115,7 +131,11 @@ export default async function BookingPage({ params }: { params: Promise<{ slug: 
         <h2 id="ask-heading" className="text-xl font-semibold">
           Ask for a clean
         </h2>
-        <p className="mb-4 mt-1 text-base text-muted-foreground">Tell us what you need. We&rsquo;ll get back to you with a time and a price.</p>
+        <p className="mb-4 mt-1 text-base text-muted-foreground">
+          {canBook
+            ? "Not sure what you need, or want something that isn't listed? Tell us, and we'll get back to you with a time and a price."
+            : "Tell us what you need. We'll get back to you with a time and a price."}
+        </p>
         <AskForm
           slug={page.slug}
           companyName={company.name}

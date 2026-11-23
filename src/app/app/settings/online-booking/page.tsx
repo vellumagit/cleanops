@@ -49,13 +49,14 @@ export default async function OnlineBookingPage({
   // The open-time rules and who takes online bookings. Their own read: a
   // database without those columns yet shows the page without this part.
   let rules: OpenTimeRules | null = null;
+  let timeBooking: "off" | "approve" | "instant" = "off";
   let people: Array<{ id: string; name: string; role: string; takes: boolean }> = [];
   if (page) {
     try {
       const [rulesRes, peopleRes] = await Promise.all([
         admin
           .from("booking_pages" as never)
-          .select("opening_hours, min_notice_hours, max_days_ahead, gap_minutes, slot_step_minutes")
+          .select("opening_hours, min_notice_hours, max_days_ahead, gap_minutes, slot_step_minutes, time_booking")
           .eq("organization_id" as never, orgId as never)
           .maybeSingle() as unknown as Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>,
         admin
@@ -70,6 +71,8 @@ export default async function OnlineBookingPage({
       if (rulesRes.error) throw new Error(rulesRes.error.message);
       if (peopleRes.error) throw new Error(peopleRes.error.message);
       rules = rulesRes.data ? readRules(rulesRes.data) : DEFAULT_RULES;
+      const mode = rulesRes.data?.time_booking;
+      timeBooking = mode === "approve" || mode === "instant" ? mode : "off";
       people = (peopleRes.data ?? [])
         .map((m) => ({ id: m.id, name: memberDisplayName(m), role: m.role, takes: m.takes_online_bookings === true }))
         // Cleaners first, then the office: the people most likely to be ticked.
@@ -124,7 +127,7 @@ export default async function OnlineBookingPage({
           />
           {page && rules && (
             <div className="max-w-2xl space-y-5">
-              <OpenTimesForm rules={rules} people={people} />
+              <OpenTimesForm rules={rules} people={people} timeBooking={timeBooking} />
               <OpenTimesPreview
                 organizationId={orgId}
                 services={services.map((s) => ({ id: s.id, name: s.name, minutes: s.default_duration_minutes }))}

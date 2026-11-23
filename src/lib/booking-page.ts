@@ -22,6 +22,8 @@ export type BookingPage = {
   headline: string | null;
   intro: string | null;
   published_at: string | null;
+  /** Whether a visitor can pick a time, and whether the office confirms it. */
+  time_booking: "off" | "approve" | "instant";
 };
 
 export type PageService = {
@@ -37,7 +39,10 @@ export type PageService = {
   booking_page_price: PriceMode;
 };
 
-const PAGE_COLUMNS = "organization_id, slug, status, headline, intro, published_at";
+const PAGE_COLUMNS = "organization_id, slug, status, headline, intro, published_at, time_booking";
+
+/** A service a visitor can pick a time for: on the page, with a length. */
+export const canBookTime = (s: PageService) => s.show_on_booking_page && (s.default_duration_minutes ?? 0) > 0;
 
 /** This company's page, or null when it hasn't made one. */
 export async function bookingPageFor(organizationId: string, admin: Admin = createSupabaseAdminClient()): Promise<BookingPage | null> {

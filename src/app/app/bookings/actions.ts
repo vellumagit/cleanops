@@ -3466,6 +3466,25 @@ export async function setBookingStatusAction(
   if (target === "completed") {
     await autoInvoiceOnJobComplete(id);
   }
+  // A time a visitor picked on the booking page, held as pending: saying
+  // Confirmed here is the office's answer, so the visitor gets the usual
+  // confirmation and stops being a lead. Only for visits booked online: an
+  // office-made pending visit confirmed from this dropdown stays as quiet
+  // as it always was (and "this and future" loops through here).
+  if (booking.status === "pending" && target === "confirmed") {
+    const { data: online } = (await supabase
+      .from("bookings")
+      .select("client_id, booked_online_at" as never)
+      .eq("id", id)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle()) as unknown as { data: { client_id: string | null; booked_online_at: string | null } | null };
+    if (online?.booked_online_at) {
+      const { confirmOnlineBookingToClient } = await import("@/lib/online-booking");
+      await confirmOnlineBookingToClient(id).catch((err) => console.error("[booking] online confirmation failed:", err));
+      const { convertLeadOnBooking } = await import("@/lib/lead-conversion");
+      await convertLeadOnBooking(online.client_id);
+    }
+  }
   await syncJob(id, "status_set");
 
   revalidatePath("/app/bookings");

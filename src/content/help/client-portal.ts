@@ -43,8 +43,9 @@ You have no page until you make one. Owners and admins set it up in **Settings �
 
 ### When you can be booked
 
-Below the page's own settings, **When you can be booked** sets the times your page will be able to offer. Nothing here is shown to the public yet. It feeds the preview underneath, so you can check it against your calendar first.
+Below the page's own settings, **When you can be booked** sets the times your page can offer. It feeds the preview underneath, so you can check it against your calendar before you let anyone pick a time.
 
+- **Can a visitor pick a time?** Starts at **No, requests only**. See *Letting visitors pick a time* below.
 - **Opening hours**: tick the days you take bookings and set the hours. A new page has none saved, so it is closed every day until you press **Save hours and people**. Weekdays nine to five are filled in as a start.
 - **Notice you need**: in hours. 24 means nobody can book for sooner than this time tomorrow.
 - **How far ahead**: in days.
@@ -55,6 +56,29 @@ Below the page's own settings, **When you can be booked** sets the times your pa
 Each service in **Services on your page** also shows its length and takes a number of cleaners. The length comes from Settings → Services and is the hours for one person. If your crews share a job's hours, a two-hour job for two cleaners is offered as one hour on site.
 
 **What a visitor would see** lists the open start times for one service over seven days. Pick the **Service** and a **From** date and press **Show**. A time is listed when enough ticked people are free: not on approved time off, inside the hours they gave, and not on another job (with your gap either side). Hover a time to see who is free. A statutory holiday is closed if you have a holiday region set. A day with no times says why, such as **Closed.**, **Too soon: inside the notice you ask for.** or **No open times: nobody is free.**
+
+### Letting visitors pick a time
+
+**Can a visitor pick a time?** has three settings:
+
+- **No, requests only**: your page has **Ask for a clean** and nothing else. This is where every page starts.
+- **Yes, and I confirm each one**: a visitor picks a time and the visit is saved as **Pending**. The time is held, so nobody else can take it, and the visitor is emailed that it isn't confirmed yet.
+- **Yes, booked straight away**: the visit is saved as **Confirmed** and the visitor gets a confirmation.
+
+With either "Yes", your page gains a **Book a clean** button. It asks one thing a screen: what they'd like, which day, what time, then the address and their name and email. Only services that are ticked to show and have a length can be booked this way. If nobody is ticked to take online bookings, or no hours are saved, there are no times to pick.
+
+What a booking does:
+
+- It is an ordinary visit on your calendar, marked **Booked online**, with the service's length and price from Settings → Services.
+- It is given to the ticked cleaner (or cleaners) with the fewest jobs that day. You can change the crew like any other visit, and they are notified the usual way.
+- Owners, admins and managers get a **Booked online** notification, or **Online booking to confirm** when you confirm each one. You can switch these off under the Schedule group in your [notification choices](/app/notifications/choices).
+- Someone new is added to your **Leads** and becomes a client once the visit is confirmed. If the email is already on a client's profile, the visit goes on that client's record. The page tells the visitor nothing about that client.
+- What the visitor typed under "Anything we should know?" shows to the crew as the client's note for that visit.
+- A confirmed visitor always gets a confirmation email with a button to see or change the visit: your own confirmation if you have it switched on, a plain one from your company if you don't.
+
+**To confirm a held booking**, open it and set its status to **Confirmed**. The visitor gets the confirmation then. **To decline it**, set it to **Cancelled**, which gives the time back.
+
+If two people press the same time at the same moment, one gets it and the other is shown the times still open.
 
 **Ask for a clean** is a short form: what they'd like, a day and time of day that suit them, the address, and their name, email and phone. It asks; it doesn't book. When someone sends it:
 

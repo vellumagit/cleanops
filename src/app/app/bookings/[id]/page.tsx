@@ -180,6 +180,15 @@ export default async function BookingDetailPage({
   if (error) throw error;
   if (!booking) notFound();
 
+  // Booked by a visitor on the company's booking page? Its own small read,
+  // so this page still opens on a database without the column yet.
+  const { data: onlineRow } = (await supabase
+    .from("bookings")
+    .select("booked_online_at" as never)
+    .eq("id", id)
+    .maybeSingle()) as unknown as { data: { booked_online_at: string | null } | null };
+  const bookedOnline = Boolean(onlineRow?.booked_online_at);
+
   // Offer history for this booking — only visible to admins, RLS will
   // silently return zero rows for employees (and they shouldn't reach here
   // anyway).
@@ -632,10 +641,24 @@ export default async function BookingDetailPage({
                   {booking.address ?? booking.client?.address ?? "No address"}
                 </p>
               </div>
-              <StatusBadge tone={bookingStatusTone(bookingStatus)}>
-                {formatBookingStatus(bookingStatus)}
-              </StatusBadge>
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                {bookedOnline && (
+                  <span data-testid="booked-online">
+                    <StatusBadge tone="violet">Booked online</StatusBadge>
+                  </span>
+                )}
+                <StatusBadge tone={bookingStatusTone(bookingStatus)}>
+                  {formatBookingStatus(bookingStatus)}
+                </StatusBadge>
+              </div>
             </div>
+            {bookedOnline && bookingStatus === "pending" && (
+              <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                Picked on your booking page. The time is held and the client has been told it isn&rsquo;t confirmed
+                yet. Set the status to Confirmed to confirm it (they get the usual confirmation), or to Cancelled to
+                decline it.
+              </p>
+            )}
             {jobState && (
               <p
                 className={`mt-2 text-sm font-medium ${

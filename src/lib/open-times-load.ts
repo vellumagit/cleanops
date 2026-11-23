@@ -31,6 +31,8 @@ export type DayTimes = {
   reason: NoTimesReason | null;
   /** The statutory holiday that closes this day, when there is one. */
   holiday?: string;
+  /** How many jobs each cleaner already starts that day. */
+  jobs: Record<string, number>;
 };
 
 export type OpenTimesLoad =
@@ -38,7 +40,7 @@ export type OpenTimesLoad =
       ok: true;
       tz: string;
       rules: OpenTimeRules;
-      service: { id: string; name: string; minutes: number; crewSize: number };
+      service: { id: string; name: string; minutes: number; crewSize: number; category: string | null; priceCents: number | null };
       cleaners: Array<{ id: string; name: string }>;
       days: DayTimes[];
     }
@@ -72,11 +74,11 @@ export async function loadOpenTimes(input: {
       .maybeSingle() as unknown as Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>,
     admin
       .from("service_types")
-      .select("id, name, default_duration_minutes, online_crew_size" as never)
+      .select("id, name, category, default_price_cents, default_duration_minutes, online_crew_size" as never)
       .eq("id", input.serviceId)
       .eq("organization_id", orgId)
       .maybeSingle() as unknown as Promise<{
-      data: { id: string; name: string; default_duration_minutes: number | null; online_crew_size: number | null } | null;
+      data: { id: string; name: string; category: string | null; default_price_cents: number | null; default_duration_minutes: number | null; online_crew_size: number | null } | null;
       error: { message: string } | null;
     }>,
     admin
@@ -99,6 +101,8 @@ export async function loadOpenTimes(input: {
     name: serviceRes.data.name,
     minutes: Math.max(0, serviceRes.data.default_duration_minutes ?? 0),
     crewSize: Math.max(1, serviceRes.data.online_crew_size ?? 1),
+    category: serviceRes.data.category,
+    priceCents: serviceRes.data.default_price_cents,
   };
   const cleaners = (peopleRes.data ?? []).map((m) => ({ id: m.id, name: memberDisplayName(m) })).sort((a, b) => a.name.localeCompare(b.name));
   const ids = cleaners.map((c) => c.id);
@@ -256,7 +260,11 @@ export async function loadOpenTimes(input: {
       sharesHours: shares,
       cleaners: engineCleaners,
     });
-    days.push({ ymd, times: result.times, reason: result.reason, ...(holidays[ymd] ? { holiday: holidays[ymd] } : {}) });
+    const jobs: Record<string, number> = {};
+    for (const c of cleaners) {
+      jobs[c.id] = (busy.get(c.id) ?? []).filter((b) => zonedYmd(new Date(b.startMs), tz) === ymd).length;
+    }
+    days.push({ ymd, times: result.times, reason: result.reason, jobs, ...(holidays[ymd] ? { holiday: holidays[ymd] } : {}) });
   }
 
   return { ok: true, tz, rules, service, cleaners, days };

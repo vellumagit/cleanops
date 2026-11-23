@@ -2,8 +2,9 @@
 
 Written 2026-11-19.
 
-Status, 2026-11-22: **phases 0, 1 and 2 are built.** Phase 3 (a guest books
-a time) is next. What each built phase left out is listed under it.
+Status, 2026-11-22: **phases 0, 1, 2 and 3 are built.** Phase 4 (change or
+cancel to another open time from a link) is next. What each built phase left
+out is listed under it.
 
 ## The goal
 
@@ -269,7 +270,7 @@ Left out of phase 2:
 - Travel time is the flat gap, not distance.
 - The preview is seven days for one service; it does not show a whole month.
 
-### Phase 3: booking a time as a guest (medium)
+### Phase 3: booking a time as a guest (BUILT 2026-11-22)
 
 - The page gains the picker: service (and size), day, open time, details,
   confirm.
@@ -279,6 +280,46 @@ Left out of phase 2:
 - Spam protection and the race check from the section above.
 - Load test: many visitors taking the same slot at once, on the local
   Postgres, never on production.
+
+Built as: `/book/<name>/time` (the picker, one question a screen),
+`src/lib/online-booking.ts` (the public view of open times, and the save),
+a switch on Settings, Online booking, and `bookings.booked_online_at`.
+Migration `20261122040000`. Race test: `test/load/online-booking.load.test.ts`.
+
+Decisions made while building:
+
+- **Off by default.** `booking_pages.time_booking` is off, approve or
+  instant. No page changed when this shipped.
+- **The save trusts nothing from the browser.** It works the open times out
+  again and books only a start still on the list, then puts the crew on
+  through the same database call the office uses, so the double-booking
+  guard decides a race. The loser's half-made visit is removed. If another
+  cleaner is still free at that time it tries again, up to three times.
+- **The visitor always gets a confirmation email** once confirmed: the
+  company's own if that automation is on, a plain one if it is off.
+- **Confirming a held booking** is the ordinary status change to Confirmed.
+  Only for visits booked online does that send the confirmation; an
+  office-made pending visit confirmed from the dropdown stays quiet.
+- The price stored on the visit is the service's price, whatever the page
+  shows the visitor.
+
+Left out of phase 3:
+
+- **The gap is not race-proof.** The database guard refuses overlaps, not
+  "too close". Two visitors pressing neighbouring times at the same instant
+  can land back to back with no travel gap. One after the other, the gap
+  holds.
+- **No "confirm by email within 15 minutes"** in instant mode. Protection is
+  the hidden field, the limits (3 an hour per email, 6 per connection) and
+  Turnstile when its keys are set. Turnstile is untested against the real
+  service.
+- **Sizes** (1 to 2 bedrooms, 3 bedrooms) are not offered: one length per
+  service.
+- A held booking has **no expiry**: it holds the time until the office
+  answers. There is no "needs you" item for it beyond the notification.
+- The visitor is not texted; email only, plus whatever the company's own
+  confirmation sends.
+- No service area check: any address is accepted.
 
 ### Phase 4: change or cancel from a link (small to medium)
 

@@ -200,6 +200,10 @@ export async function saveOpenTimeRulesAction(_prev: OnlineBookingState, formDat
 
   const parsed = parseRulesForm((name) => String(formData.get(name) ?? ""));
   if (!parsed.ok) return { error: parsed.error };
+  // Whether a visitor can pick a time at all. A form that doesn't say
+  // (an older tab) leaves it as it is.
+  const mode = String(formData.get("time_booking") ?? "");
+  const timeBooking = ["off", "approve", "instant"].includes(mode) ? mode : null;
 
   const { data: saved, error } = (await supabase
     .from("booking_pages" as never)
@@ -209,6 +213,7 @@ export async function saveOpenTimeRulesAction(_prev: OnlineBookingState, formDat
       max_days_ahead: parsed.rules.maxDaysAhead,
       gap_minutes: parsed.rules.gapMinutes,
       slot_step_minutes: parsed.rules.stepMinutes,
+      ...(timeBooking ? { time_booking: timeBooking } : {}),
     } as never)
     .eq("organization_id" as never, orgId as never)
     .select("slug")) as unknown as { data: Array<{ slug: string }> | null; error: { message: string } | null };
@@ -236,6 +241,16 @@ export async function saveOpenTimeRulesAction(_prev: OnlineBookingState, formDat
     if (personErr) return { error: `The hours were saved, but a person's setting was not: ${personErr.message}` };
   }
 
+  if (timeBooking) {
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "settings",
+      entity_id: orgId,
+      after: { booking_page: saved[0].slug, time_booking: timeBooking },
+    });
+  }
   refresh(saved[0].slug);
+  revalidatePath(`/book/${saved[0].slug}/time`);
   return { ok: "Saved. The preview below uses these." };
 }

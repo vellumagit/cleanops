@@ -20,7 +20,10 @@ const empty: OnlineBookingState = {};
 export function OpenTimesForm({
   rules,
   people,
+  timeBooking,
 }: {
+  /** Whether a visitor can pick a time, and whether the office confirms it. */
+  timeBooking: "off" | "approve" | "instant";
   rules: OpenTimeRules;
   people: Array<{ id: string; name: string; role: string; takes: boolean }>;
 }) {
@@ -37,8 +40,8 @@ export function OpenTimesForm({
       <div>
         <h2 className="text-base font-semibold">When you can be booked</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          These decide which times are open. Nothing here is shown to the public yet: use the preview below to see
-          what a visitor would be offered.
+          These decide which times are open. Use the preview below to see what a visitor would be offered before
+          you let anyone pick one.
         </p>
       </div>
       <FormError message={state.error} />
@@ -53,6 +56,18 @@ export function OpenTimesForm({
           change them and press Save.
         </p>
       )}
+
+      <FormField
+        label="Can a visitor pick a time?"
+        htmlFor="time_booking"
+        hint="Off: your page takes requests only. The other two add a Book a clean button to your page."
+      >
+        <FormSelect id="time_booking" name="time_booking" defaultValue={timeBooking}>
+          <option value="off">No, requests only</option>
+          <option value="approve">Yes, and I confirm each one (the time is held until I do)</option>
+          <option value="instant">Yes, booked straight away</option>
+        </FormSelect>
+      </FormField>
 
       <fieldset>
         <legend className="text-sm font-medium">Opening hours</legend>
