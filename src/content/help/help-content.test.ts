@@ -45,7 +45,7 @@ describe("site map", () => {
     const onDisk = new Set(
       pageRoutes(COVERED_TOPS).concat(
         // Public pages people are sent to, listed for completeness.
-        pageRoutes(["e", "c", "i", "v", "pay", "review", "claim", "join", "u", "texting", "help"]),
+        pageRoutes(["e", "c", "i", "v", "book", "pay", "review", "claim", "join", "u", "texting", "help"]),
       ),
     );
     const ghosts = SITE_MAP.map((p) => p.path).filter((p) => !onDisk.has(p));

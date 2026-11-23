@@ -211,7 +211,7 @@ describe.skipIf(!hasPostgrest)("a booking request, from the client", { timeout: 
     expect(await asUser(me.userId, () => submitBookingRequestAction({}, form({ service_type: "" })))).toEqual({ error: "Please describe what you need cleaned." });
     expect(((await asUser(me.userId, () => submitBookingRequestAction({}, form({ service_type: "Clean", notes: "card 4111 1111 1111 1111" })))) as { error?: string }).error).toContain("(in notes)");
     expect(await asUser(me.userId, () => submitBookingRequestAction({}, form({ service_type: "Clean", preferred_time_window: "midnight" })))).toEqual({
-      error: "Pick a preferred time window or leave it flexible.",
+      error: "Pick a preferred time of day, or leave it flexible.",
     });
     expect(await api.sql("select 1 from public.booking_requests where client_id = $1", [me.client])).toHaveLength(1);
 

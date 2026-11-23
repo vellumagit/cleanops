@@ -11,6 +11,7 @@ import {
   CreditCard,
   Database,
   Globe2,
+  Link2,
   KeyRound,
   Mail,
   MessageSquare,
@@ -110,6 +111,13 @@ const SECTIONS: Section[] = [
         title: "SMS / Texting",
         description:
           "Text clients from your own number. Included in your plan up to a monthly limit.",
+      },
+      {
+        href: "/app/settings/online-booking",
+        icon: Link2,
+        title: "Online booking",
+        description:
+          "Your own page for clients, on a link you choose: they ask for a clean there and sign in to see their visits. You build it, preview it, then publish it.",
       },
       {
         href: "/app/settings/intake-forms",

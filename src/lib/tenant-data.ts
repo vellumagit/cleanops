@@ -40,6 +40,7 @@ const TENANT_TABLES = [
   "booking_assignees",
   "booking_checklist_items",
   "booking_member_calendar_events",
+  "booking_pages",
   "booking_requests",
   "booking_series",
   "bookings",
@@ -386,6 +387,7 @@ export const PURGE_TABLE_ORDER: readonly string[] = [
   "contract_documents",
   "contracts",
   // Booking requests + bookings + series
+  "booking_pages",
   "booking_requests",
   "bookings",
   "booking_series",

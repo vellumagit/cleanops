@@ -1,6 +1,9 @@
 # Online booking: roadmap
 
-Written 2026-11-19. Status: plan only, nothing built.
+Written 2026-11-19.
+
+Status, 2026-11-22: **phase 0 and phase 1 are built.** Phase 2 (open times)
+is next. What each built phase left out is listed under it.
 
 ## The goal
 
@@ -184,7 +187,12 @@ office turns it into a series. Revisit in phase 6.
 
 Each phase ends in something usable and is tested before the next starts.
 
-### Phase 0: the front doors (small to medium, do first)
+### Phase 0: the front doors (BUILT 2026-11-22)
+
+Left out: texts don't carry the visit link, only emails. Someone on file
+with two companies sees the one that has had them longest; there is no
+"which company?" chooser. The real auth server's part of sign-in has no
+automated test (the test stack has none).
 
 Makes what exists today easy to get into, before anything new is offered.
 See "How a client gets in".
@@ -202,7 +210,10 @@ See "How a client gets in".
 Needs no slot logic and no company page, so it helps Svit's existing
 clients straight away.
 
-### Phase 1: the company page, with requests (small)
+### Phase 1: the company page, with requests (BUILT 2026-11-22)
+
+Left out: the QR code (no generator is installed yet), and a redirect from
+an old name after a rename (the old link simply stops working).
 
 - `/book/[slug]`: logo, colour, short description, services marked as public,
   contact details, **Sign in** for existing clients.

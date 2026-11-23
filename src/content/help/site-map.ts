@@ -144,6 +144,7 @@ export const SITE_MAP: SitePage[] = [
   { path: "/app/settings/automations", name: "Client messages (client automations, presets, the automations master switch)", where: "Settings → Clients → Client messages", area: "office", roles: OWNER_ADMIN },
   { path: "/app/settings/sms", name: "SMS / Texting", where: "Settings → Clients → SMS / Texting", area: "office", roles: OWNER_ADMIN },
   { path: "/app/settings/intake-forms", name: "Website & lead forms (intake forms, new-lead alerts)", where: "Settings → Clients → Website & lead forms", area: "office", roles: OWNER_ADMIN },
+  { path: "/app/settings/online-booking", name: "Online booking (your booking page: link, words, services, publish)", where: "Settings → Clients → Online booking", area: "office", roles: OWNER_ADMIN },
   { path: "/app/settings/invoicing", name: "Invoicing settings (auto-send, auto-draft, morning digest, auto-void and its days)", where: "Settings → Money → Invoicing", area: "office", roles: OWNER_ADMIN },
   { path: "/app/settings/recurring-invoices", name: "Recurring invoices", where: "Settings → Money → Recurring invoices", area: "office", roles: OWNER_ADMIN },
   { path: "/app/settings/recurring-invoices/new", name: "New recurring invoice", where: "Recurring invoices → New series", area: "office", roles: OWNER_ADMIN },
@@ -194,6 +195,7 @@ export const SITE_MAP: SitePage[] = [
   // ─── Links people receive ──────────────────────────────────────────
   { path: "/e/[token]", name: "Estimate (client view)", where: "The link in an estimate email", area: "public" },
   { path: "/v/[token]", name: "A visit (client view)", where: "The button in a booking confirmation, reminder or reschedule email", area: "public" },
+  { path: "/book/[slug]", name: "A company's booking page", where: "The link a company chooses in Settings → Clients → Online booking", area: "public" },
   { path: "/c/[token]", name: "Contract to sign", where: "The link in a contract email", area: "public" },
   { path: "/i/[token]", name: "Invoice (client view)", where: "The link in an invoice email or text", area: "public" },
   { path: "/pay/[id]/success", name: "Payment received", where: "After a client pays online", area: "public" },

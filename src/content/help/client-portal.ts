@@ -6,13 +6,14 @@ export const article: HelpArticle = {
   blurb: "How clients get in with just their email, inviting them, what each portal page lets them do, and what you see when they use it.",
   section: "Website & portal",
   paths: [
+    "/app/settings/online-booking",
     "/client/(portal)",
     "/client/(portal)/jobs",
     "/client/(portal)/jobs/[id]",
     "/client/(portal)/invoices",
     "/client/(portal)/request",
   ],
-  keywords: ["customer login", "self-service", "client app", "client account", "portal invite", "skip a visit", "pay online", "client sign in"],
+  keywords: ["customer login", "self-service", "client app", "client account", "portal invite", "skip a visit", "pay online", "client sign in", "booking page", "online booking", "booking link", "request a clean"],
   body: `
 The client portal is the client's own sign-in to Sollos. They see their visits and invoices, leave a note for the cleaner, skip a visit, pay, and ask for a new booking. It saves you phone calls: the small things reach you as tidy requests instead of interruptions.
 
@@ -25,6 +26,26 @@ Any client with an email address on file can get in, with no setup and no passwo
 3. They press it and they're in. The button works once, for an hour. Next time they ask for a new one the same way.
 
 If the email they type isn't the one on their profile, nothing arrives. That is on purpose: the page gives the same answer either way, so nobody can use it to find out who your clients are. If a client says no email came, check the address on their profile.
+
+## Your booking page
+
+Your own page for clients, on a link you choose, such as sollos3.com/book/your-company. It carries your logo, colour and words, and has two big buttons: **Ask for a clean** and **See my cleans**. Put the link on your website, your cards and your messages.
+
+You have no page until you make one. Owners and admins set it up in **Settings → Clients → Online booking**:
+
+1. **Choose your link** and press **Make my page, as a draft**. Your company's name is suggested; change it if you like.
+2. Write a **Headline** and **A few words about you**.
+3. Under **Services on your page**, tick the services a visitor should see. For each, choose **Show the price**, **Show as "From $X"**, or **Don't show a price**. Prices come from Settings → Services.
+4. Press **Save**, then **Preview** to look at it. A draft opens only for you and your office. To anyone else the link shows "not found".
+5. Press **Publish** when you're happy.
+
+**Take it down** hides the page again and keeps everything you set up. Changing the **Link name** changes your link, and the old one stops working, so update it anywhere you shared it.
+
+**Ask for a clean** is a short form: what they'd like, a day and time of day that suit them, the address, and their name, email and phone. It asks; it doesn't book. When someone sends it:
+
+- It lands on your [Requests](/app/bookings/requests) page, and owners, admins, and managers get a "New booking request" notification. The owner is emailed too.
+- Someone new is added to your **Leads**. If the email is already on a client's profile, the request goes on that client's record.
+- The visitor gets a short email from your company saying the request arrived and that nothing is booked yet.
 
 ## Inviting a client
 

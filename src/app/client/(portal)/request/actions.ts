@@ -1,12 +1,9 @@
 "use server";
 
 import "server-only";
-import { revalidatePath } from "next/cache";
 import { requireClientAction } from "@/lib/client-auth";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { sendOrgEmail, isClientEmailPaused, isEmailConfigured } from "@/lib/email";
-import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { fileBookingRequest } from "@/lib/booking-request";
 
 export type RequestBookingState = {
   error?: string;
@@ -15,14 +12,9 @@ export type RequestBookingState = {
 };
 
 /**
- * Client submits a booking request from /client/request. Stored in
- * booking_requests with status=pending. The owner reviews it in
- * /app/bookings/requests and converts it to a real booking after
- * discussing scope / pricing with the client.
- *
- * Uses the admin client for the insert — we validate the client in
- * requireClientAction() first, and the schema has no client-side RLS INSERT
- * policy by design (the portal writes through server actions only).
+ * A signed-in client asks for a clean from /client/request. The request
+ * itself is filed by lib/booking-request.ts, which a company's booking page
+ * shares; this is the signed-in door onto it.
  */
 export async function submitBookingRequestAction(
   _prev: RequestBookingState,
@@ -30,188 +22,23 @@ export async function submitBookingRequestAction(
 ): Promise<RequestBookingState> {
   const client = await requireClientAction();
 
-  // Each request pushes to every manager and sends the org an email that
+  // Each request alerts every manager and sends the company an email that
   // counts against its daily cap. Five an hour is a person; more is a
-  // portal login being used to flood the business or burn its cap.
+  // login being used to flood the business or burn its cap.
   const rl = await checkRateLimit(`portal-req:${client.id}`, 5, 3_600_000);
   if (!rl.allowed) {
     return { error: "You've sent a few requests in the last hour. Give the team a moment to reply." };
   }
 
-  const serviceType = String(formData.get("service_type") ?? "").trim();
-  const preferredDate = String(formData.get("preferred_date") ?? "").trim();
-  const preferredTimeWindow = String(
-    formData.get("preferred_time_window") ?? "",
-  ).trim();
-  const address = String(formData.get("address") ?? "").trim();
-  const notes = String(formData.get("notes") ?? "").trim();
-
-  if (!serviceType) {
-    return { error: "Please describe what you need cleaned." };
-  }
-
-  // PCI guard: Luhn-validated card number detection on every free-text
-  // field. The other write paths (bookings, clients, invoices, etc.)
-  // all run the same check via the noCardNumber Zod validator —
-  // booking_requests fell through the cracks because it doesn't go
-  // through a Zod schema. Without this, a client pasting their card
-  // into the Notes / Address field would store it plaintext.
-  for (const [label, value] of [
-    ["service description", serviceType],
-    ["address", address],
-    ["notes", notes],
-  ] as const) {
-    if (value && detectCardNumber(value)) {
-      return { error: `${CARD_DETECTED_MESSAGE} (in ${label})` };
-    }
-  }
-
-  // Time window is constrained on the DB side, but validate here too
-  // so we return a helpful message instead of a constraint error.
-  const validWindows = ["morning", "afternoon", "evening", "flexible", ""];
-  if (!validWindows.includes(preferredTimeWindow)) {
-    return {
-      error: "Pick a preferred time window or leave it flexible.",
-    };
-  }
-
-  const admin = createSupabaseAdminClient();
-
-  const { data: inserted, error } = (await admin
-    .from("booking_requests" as never)
-    .insert({
-      organization_id: client.organization_id,
-      client_id: client.id,
-      service_type: serviceType || null,
-      preferred_date: preferredDate || null,
-      preferred_time_window: preferredTimeWindow || null,
-      address: address || null,
-      notes: notes || null,
-      status: "pending",
-    } as never)
-    .select("id")
-    .single()) as unknown as {
-    data: { id: string } | null;
-    error: { message: string } | null;
-  };
-
-  if (error || !inserted) {
-    console.error("[booking-request] insert failed:", error?.message);
-    return {
-      error: "Could not save your request. Try again in a moment.",
-    };
-  }
-
-  // In-app notification FIRST — every sibling portal action (job notes,
-  // skip requests, payments) calls notify(); this one, the action that
-  // represents new revenue, sent email only. If mail was paused or eaten,
-  // the sole trace was a sidebar number.
-  try {
-    const { notify } = await import("@/lib/notify");
-    await notify({
-      organizationId: client.organization_id,
-      audience: "org-management",
-      topic: "clients",
-      title: "New booking request",
-      body: `${client.name} requested ${serviceType}${preferredDate ? ` — preferred ${preferredDate}` : ""}. Review and schedule it.`,
-      href: "/app/bookings/requests",
-    });
-  } catch (err) {
-    console.error("[booking-request] notify failed:", err);
-  }
-
-  // Notify the org that a request came in. Fire-and-forget: never
-  // block the client's form submission on owner-side mail delivery.
-  if (isEmailConfigured() && !isClientEmailPaused()) {
-    const { data: orgRow } = (await admin
-      .from("organizations")
-      .select("name, contact_email, sender_email")
-      .eq("id", client.organization_id)
-      .maybeSingle()) as unknown as {
-      data: {
-        name: string;
-        contact_email: string | null;
-        sender_email: string | null;
-      } | null;
-    };
-
-    // Primary target: the owner's real Supabase Auth account email.
-    // This is the address they signed up with — always current even if
-    // they haven't set contact_email in org settings.
-    // Fall back to org contact_email → sender_email for legacy orgs.
-    let ownerEmail: string | null = null;
-    const { data: ownerMembership } = (await admin
-      .from("memberships")
-      .select("profile_id")
-      .eq("organization_id", client.organization_id)
-      .eq("role", "owner")
-      .limit(1)
-      .maybeSingle()) as unknown as {
-      data: { profile_id: string } | null;
-    };
-    if (ownerMembership?.profile_id) {
-      const { data: ownerUser } = await admin.auth.admin.getUserById(
-        ownerMembership.profile_id,
-      );
-      ownerEmail = ownerUser.user?.email ?? null;
-    }
-
-    const notifyTo =
-      ownerEmail ?? orgRow?.contact_email ?? orgRow?.sender_email;
-    if (notifyTo) {
-      const siteUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-      const subjectLine = `New booking request from ${client.name}`;
-      const plainBody = [
-        `${client.name} just requested a booking via the client portal.`,
-        "",
-        `Service: ${serviceType}`,
-        preferredDate ? `Preferred date: ${preferredDate}` : null,
-        preferredTimeWindow
-          ? `Preferred time: ${preferredTimeWindow}`
-          : null,
-        address ? `Address: ${address}` : null,
-        notes ? `Notes: ${notes}` : null,
-        "",
-        `Review + respond: ${siteUrl}/app/bookings/requests`,
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      // Minimal HTML — we could reuse the fancy template later, but
-      // this is internal mail to the owner and plain text reads fine.
-      const html = `<p>${client.name} just requested a booking via the client portal.</p>
-<ul>
-  <li><strong>Service:</strong> ${escapeHtml(serviceType)}</li>
-  ${preferredDate ? `<li><strong>Preferred date:</strong> ${escapeHtml(preferredDate)}</li>` : ""}
-  ${preferredTimeWindow ? `<li><strong>Preferred time:</strong> ${escapeHtml(preferredTimeWindow)}</li>` : ""}
-  ${address ? `<li><strong>Address:</strong> ${escapeHtml(address)}</li>` : ""}
-  ${notes ? `<li><strong>Notes:</strong> ${escapeHtml(notes)}</li>` : ""}
-</ul>
-<p><a href="${siteUrl}/app/bookings/requests">Review + respond →</a></p>`;
-
-      sendOrgEmail(client.organization_id, {
-        to: notifyTo,
-        toName: orgRow?.name,
-        subject: subjectLine,
-        html,
-        text: plainBody,
-      }).catch((err) =>
-        console.error("[booking-request] notify email failed:", err),
-      );
-    }
-  }
-
-  revalidatePath("/client/request");
-  revalidatePath("/app/bookings/requests");
-  return { ok: true, requestId: inserted.id };
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  const res = await fileBookingRequest({
+    organizationId: client.organization_id,
+    client: { id: client.id, name: client.name },
+    serviceType: String(formData.get("service_type") ?? ""),
+    preferredDate: String(formData.get("preferred_date") ?? ""),
+    preferredTimeWindow: String(formData.get("preferred_time_window") ?? ""),
+    address: String(formData.get("address") ?? ""),
+    notes: String(formData.get("notes") ?? ""),
+    via: "client area",
+  });
+  return res.ok ? { ok: true, requestId: res.requestId } : { error: res.error };
 }
