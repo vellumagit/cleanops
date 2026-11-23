@@ -4,6 +4,8 @@ import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { visitByToken } from "@/lib/visit-link";
 import { askToMoveVisit, leaveVisitNote, skipVisit, type ClientJobActionState } from "@/lib/client-visit-requests";
+import { moveVisit, visitOpenTimes } from "@/lib/visit-move";
+import type { PublicDay } from "@/lib/online-booking";
 
 /**
  * What a client can do from the private link in a booking email, with no
@@ -37,4 +39,31 @@ export async function visitCancelAction(_prev: ClientJobActionState, formData: F
   const found = await linked(formData);
   if ("error" in found) return { error: found.error };
   return skipVisit(found.client, found.visit, String(formData.get("reason") ?? ""));
+}
+
+export type VisitTimesState = { days: PublicDay[]; nextFrom: string | null; error?: string };
+
+/** The open times this visit could move to (lib/visit-move.ts). */
+export async function visitTimesAction(token: string, fromYmd: string | null): Promise<VisitTimesState> {
+  enterFailClosed();
+  const none = (error: string): VisitTimesState => ({ days: [], nextFrom: null, error });
+  const limit = await checkIpRateLimit("visit-link-times", 60, 60_000);
+  if (!limit.allowed) return none("That's a lot of looking. Wait a minute and try again.");
+  const visit = await visitByToken(String(token ?? ""));
+  if (!visit) return none("This link has stopped working. Call us and we'll help.");
+  const from = fromYmd && /^\d{4}-\d{2}-\d{2}$/.test(fromYmd) ? fromYmd : undefined;
+  const res = await visitOpenTimes(visit, from);
+  if (!res.ok) return none(res.error);
+  return { days: res.days, nextFrom: res.nextFrom };
+}
+
+export type VisitMoveState = { moved?: { when: string }; taken?: boolean; error?: string };
+
+/** Move the visit to a time the client picked from that list. */
+export async function visitMoveToAction(_prev: VisitMoveState, formData: FormData): Promise<VisitMoveState> {
+  const found = await linked(formData);
+  if ("error" in found) return { error: found.error };
+  const res = await moveVisit(found.client, found.visit, Number(formData.get("at")));
+  if (!res.ok) return res.taken ? { taken: true } : { error: res.error };
+  return { moved: { when: res.when } };
 }

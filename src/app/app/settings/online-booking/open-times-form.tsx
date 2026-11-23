@@ -21,7 +21,10 @@ export function OpenTimesForm({
   rules,
   people,
   timeBooking,
+  changeNoticeHours,
 }: {
+  /** Hours before a visit up to which a client can change or cancel it themselves. */
+  changeNoticeHours: number;
   /** Whether a visitor can pick a time, and whether the office confirms it. */
   timeBooking: "off" | "approve" | "instant";
   rules: OpenTimeRules;
@@ -110,6 +113,13 @@ export function OpenTimesForm({
         </FormField>
         <FormField label="Gap between jobs" htmlFor="gap_minutes" hint="Minutes kept clear before and after a cleaner's other jobs, for travel.">
           <Input id="gap_minutes" name="gap_minutes" inputMode="numeric" defaultValue={String(rules.gapMinutes)} />
+        </FormField>
+        <FormField
+          label="Changes and cancellations"
+          htmlFor="change_notice_hours"
+          hint="Hours. Up to this long before a visit, a client can cancel it themselves, or move it if visitors can book straight away. Closer than this, cancelling asks you first."
+        >
+          <Input id="change_notice_hours" name="change_notice_hours" inputMode="numeric" defaultValue={String(changeNoticeHours)} />
         </FormField>
         <FormField label="Start times every" htmlFor="slot_step_minutes">
           <FormSelect id="slot_step_minutes" name="slot_step_minutes" defaultValue={String(rules.stepMinutes)}>

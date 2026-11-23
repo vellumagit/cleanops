@@ -2,9 +2,8 @@
 
 Written 2026-11-19.
 
-Status, 2026-11-22: **phases 0, 1, 2 and 3 are built.** Phase 4 (change or
-cancel to another open time from a link) is next. What each built phase left
-out is listed under it.
+Status, 2026-11-22: **phases 0 to 4 are built.** Phase 5 (money) is next.
+What each built phase left out is listed under it.
 
 ## The goal
 
@@ -321,12 +320,40 @@ Left out of phase 3:
   confirmation sends.
 - No service area check: any address is accepted.
 
-### Phase 4: change or cancel from a link (small to medium)
+### Phase 4: change or cancel from a link (BUILT 2026-11-22)
 
 - Every confirmation and reminder carries a private link to that one visit.
 - The client can move it to another open time or cancel, inside a notice
   period the company sets. Past that, the page says to contact the company.
 - The office is told of every change.
+
+Built as: `/v/<token>/move` (which day, what time, one confirm button),
+`src/lib/visit-move.ts`, and `booking_pages.change_notice_hours`
+(migration `20261122050000`). The link itself, cancelling and "ask to move"
+were built in phase 0.
+
+Decisions made while building:
+
+- **The notice period is one number**, 48 hours to start, set with the
+  hours in Settings, Online booking. Inside it a client cancels at once and
+  (where allowed) moves; closer than that a cancel is a request the office
+  answers and a move is a phone call. A company with no page keeps 48.
+- **Self-move only where the company books straight away.** A company that
+  confirms each booking, or takes requests only, keeps "ask to move".
+- **The same crew keeps the job.** Open times are when every person on the
+  visit is free, whether or not they take online bookings. Nobody is swapped.
+- The move is the database call the scheduler's drag uses, so the
+  double-booking guard decides, and the client gets the usual rescheduled
+  message.
+- Three self-moves per visit, then it is a phone call.
+
+Left out of phase 4:
+
+- A visit with nobody on it, or with people on their own split times, can't
+  be moved by the client.
+- A moved visit in a series is one visit moved; the series is untouched.
+- Text messages don't carry the link; emails do.
+- No fee or policy text for late changes (phase 5).
 
 ### Phase 5: money (medium)
 

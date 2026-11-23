@@ -50,6 +50,7 @@ Below the page's own settings, **When you can be booked** sets the times your pa
 - **Notice you need**: in hours. 24 means nobody can book for sooner than this time tomorrow.
 - **How far ahead**: in days.
 - **Gap between jobs**: minutes kept clear before and after a cleaner's other jobs, for travel.
+- **Changes and cancellations**: in hours, 48 to start. Up to this long before a visit a client can cancel it themselves (and move it, if visitors can book straight away). Closer than this, a cancel comes to your Requests page first.
 - **Start times every**: 15 minutes, 30 minutes, or an hour.
 - **Who takes online bookings**: only the people you tick are ever offered. Nobody is ticked to start with.
 
@@ -152,7 +153,14 @@ Notes can be up to 1,000 characters. A note that looks like a card number is ref
 - Owners, admins, and managers get a notification and an email.
 - The crew is not told. The visit goes ahead as booked until you move it.
 
-**Skip a visit.** What happens depends on how soon the visit is:
+**Move to another time.** Shown instead of "Ask to move this visit" when your booking page is set to **Yes, booked straight away** (see *Letting visitors pick a time*). The client picks a day and a time and presses **Yes, move my clean**:
+
+- The times offered are the ones the visit's own crew is free, inside your opening hours, with your gap either side of their other jobs. The same people stay on the job.
+- The visit moves at once. Owners, admins and managers get a "moved a visit" notification, the crew gets the usual rescheduled notice, and the calendars follow.
+- It is on the booking's record as *Moved their visit from … to …*.
+- It isn't offered when the visit is closer than your notice period, has nobody assigned, has people on their own split times, or has already been moved three times by the client. The page then says to ask or call.
+
+**Skip a visit.** What happens depends on how soon the visit is. The 48 hours below is the starting notice period; you can change it under **Changes and cancellations** in **Settings → Clients → Online booking**:
 
 - **48 hours or more away**: the button reads **Skip this cleaning**. The visit is cancelled straight away. You get a notification, and so does the assigned crew. It comes off the calendars, and the rest of a recurring schedule carries on as normal.
 - **Less than 48 hours away**: the button reads **Ask to skip**. Nothing is cancelled yet. The request goes to your [Requests](/app/bookings/requests) page for you to approve or decline, and owners, admins, and managers get a notification and an email. See [Requests](help:requests).

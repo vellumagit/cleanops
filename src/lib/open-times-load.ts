@@ -52,7 +52,14 @@ const addDays = (ymd: string, n: number) => new Date(Date.parse(`${ymd}T12:00:00
 
 export async function loadOpenTimes(input: {
   organizationId: string;
-  serviceId: string;
+  /** The service being booked. Not needed when `visit` is given. */
+  serviceId?: string;
+  /**
+   * Open times for moving a visit that already exists: its own length, its
+   * own crew (every one of them has to be free, whether or not they take
+   * online bookings), and itself left out of what keeps them busy.
+   */
+  visit?: { bookingId: string; durationMinutes: number; crewIds: string[]; dividesHours: boolean };
   /** First day, on the company's calendar. Defaults to today. */
   fromYmd?: string;
   /** How many days, 1 to 31. */
@@ -64,7 +71,8 @@ export async function loadOpenTimes(input: {
   const nowMs = input.now ?? Date.now();
   const count = Math.min(31, Math.max(1, Math.floor(input.days)));
 
-  const [tz, shares, pageRes, serviceRes, peopleRes] = await Promise.all([
+  const visit = input.visit ?? null;
+  const [tz, orgShares, pageRes, serviceRes, peopleRes] = await Promise.all([
     getOrgTimezone(orgId),
     orgDividesCrewHours(orgId),
     admin
@@ -75,35 +83,52 @@ export async function loadOpenTimes(input: {
     admin
       .from("service_types")
       .select("id, name, category, default_price_cents, default_duration_minutes, online_crew_size" as never)
-      .eq("id", input.serviceId)
+      .eq("id", input.serviceId ?? "00000000-0000-0000-0000-000000000000")
       .eq("organization_id", orgId)
       .maybeSingle() as unknown as Promise<{
       data: { id: string; name: string; category: string | null; default_price_cents: number | null; default_duration_minutes: number | null; online_crew_size: number | null } | null;
       error: { message: string } | null;
     }>,
-    admin
-      .from("memberships")
-      .select("id, display_name, profile:profiles ( full_name )")
-      .eq("organization_id", orgId)
-      .eq("status", "active")
-      .eq("takes_online_bookings" as never, true as never) as unknown as Promise<{
+    (visit
+      ? admin
+          .from("memberships")
+          .select("id, display_name, profile:profiles ( full_name )")
+          .eq("organization_id", orgId)
+          .eq("status", "active")
+          .in("id", visit.crewIds.length > 0 ? visit.crewIds : ["00000000-0000-0000-0000-000000000000"])
+      : admin
+          .from("memberships")
+          .select("id, display_name, profile:profiles ( full_name )")
+          .eq("organization_id", orgId)
+          .eq("status", "active")
+          .eq("takes_online_bookings" as never, true as never)) as unknown as Promise<{
       data: Array<{ id: string; display_name: string | null; profile: { full_name: string | null } | null }> | null;
       error: { message: string } | null;
     }>,
   ]);
   for (const res of [pageRes, serviceRes, peopleRes]) if (res.error) throw new Error(res.error.message);
   if (!pageRes.data) return { ok: false, error: "Make your booking page first." };
-  if (!serviceRes.data) return { ok: false, error: "That service wasn't found." };
+  if (!visit && !serviceRes.data) return { ok: false, error: "That service wasn't found." };
 
   const rules = readRules(pageRes.data);
-  const service = {
-    id: serviceRes.data.id,
-    name: serviceRes.data.name,
-    minutes: Math.max(0, serviceRes.data.default_duration_minutes ?? 0),
-    crewSize: Math.max(1, serviceRes.data.online_crew_size ?? 1),
-    category: serviceRes.data.category,
-    priceCents: serviceRes.data.default_price_cents,
-  };
+  // A crew shares the job's hours: the company's setting, or for a visit
+  // that exists, that visit's own.
+  const shares = visit ? visit.dividesHours || orgShares : orgShares;
+  const service = visit
+    ? { id: "", name: "", minutes: Math.max(0, visit.durationMinutes), crewSize: Math.max(1, visit.crewIds.length), category: null, priceCents: null }
+    : {
+        id: serviceRes.data!.id,
+        name: serviceRes.data!.name,
+        minutes: Math.max(0, serviceRes.data!.default_duration_minutes ?? 0),
+        crewSize: Math.max(1, serviceRes.data!.online_crew_size ?? 1),
+        category: serviceRes.data!.category,
+        priceCents: serviceRes.data!.default_price_cents,
+      };
+  // Someone on the visit's crew is no longer active: nobody can stand in
+  // for them here, so there is nothing to offer.
+  if (visit && (peopleRes.data ?? []).length < visit.crewIds.length) {
+    return { ok: false, error: "This visit can't be moved here." };
+  }
   const cleaners = (peopleRes.data ?? []).map((m) => ({ id: m.id, name: memberDisplayName(m) })).sort((a, b) => a.name.localeCompare(b.name));
   const ids = cleaners.map((c) => c.id);
 
@@ -188,7 +213,8 @@ export async function loadOpenTimes(input: {
     }
 
     // Who is on each job, with their own times where they have them.
-    const jobs = jobsRes.data ?? [];
+    // The visit being moved doesn't stand in its own way.
+    const jobs = (jobsRes.data ?? []).filter((j) => j.id !== visit?.bookingId);
     const crewByJob = new Map<string, Array<{ membershipId: string; startOffsetMinutes: number | null; durationMinutes: number | null }>>();
     for (let i = 0; i < jobs.length; i += 150) {
       const { data, error } = (await admin
@@ -216,7 +242,7 @@ export async function loadOpenTimes(input: {
           bookingId: j.id,
           scheduledAt: j.scheduled_at,
           durationMinutes: j.duration_minutes ?? 0,
-          dividesHours: j.divide_hours_evenly === true || shares,
+          dividesHours: j.divide_hours_evenly === true || orgShares,
           crew,
         };
       }),

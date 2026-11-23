@@ -22,6 +22,9 @@
  */
 export const SKIP_AUTO_APPLY_HOURS = 48;
 
+/** How many times a client can move one visit themselves before it is a phone call. */
+export const MAX_SELF_MOVES = 3;
+
 /** Statuses where a client can still say something useful about the visit. */
 const ACTIONABLE = new Set(["pending", "confirmed"]);
 
@@ -50,6 +53,8 @@ export function clientBookingActions(
     archived_at?: string | null;
   },
   now: number = Date.now(),
+  /** The company's own notice period, in hours (Settings, Online booking). */
+  noticeHours: number = SKIP_AUTO_APPLY_HOURS,
 ): ClientBookingActionState {
   const none = { canNote: false, canSkip: false, skipAutoApplies: false };
 
@@ -85,7 +90,7 @@ export function clientBookingActions(
   return {
     canNote: true,
     canSkip: true,
-    skipAutoApplies: hoursAway >= SKIP_AUTO_APPLY_HOURS,
+    skipAutoApplies: hoursAway >= Math.max(0, noticeHours),
     reason: null,
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import Link from "next/link";
 import type { ClientJobActionState } from "@/lib/client-visit-requests";
 import { visitCancelAction, visitMoveAction, visitNoteAction } from "./actions";
 
@@ -18,7 +19,10 @@ export function VisitActions({
   companyName,
   cancelsAtOnce,
   button,
+  moveHref,
 }: {
+  /** Where the client picks a new time themselves, when the company allows it. */
+  moveHref?: string | null;
   token: string;
   companyName: string;
   /** Far enough out that cancelling takes effect straight away. */
@@ -89,8 +93,19 @@ export function VisitActions({
         </form>
       )}
 
-      {choice("move", "Ask to move this visit")}
-      {open === "move" && (
+      {moveHref && (
+        <Link
+          href={moveHref}
+          className="flex min-h-14 w-full items-center justify-between rounded-xl border border-border bg-card px-5 text-left text-lg font-medium transition-colors hover:bg-muted"
+        >
+          Move to another time
+          <span aria-hidden className="text-muted-foreground">
+            →
+          </span>
+        </Link>
+      )}
+      {!moveHref && choice("move", "Ask to move this visit")}
+      {!moveHref && open === "move" && (
         <form action={sendMove} className="space-y-3 rounded-xl border border-border p-4">
           <input type="hidden" name="token" value={token} />
           <Problem text={move.error} />

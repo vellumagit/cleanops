@@ -7,6 +7,7 @@ import { memberDisplayName } from "@/lib/member-display";
 import { clientBookingActions } from "@/lib/client-job-requests";
 import { brandButtonColors } from "@/lib/readable-on";
 import { visitByToken } from "@/lib/visit-link";
+import { visitMoveState } from "@/lib/visit-move";
 import { VisitActions } from "./visit-actions";
 
 export const metadata = { title: "Your clean", robots: { index: false, follow: false } };
@@ -87,7 +88,10 @@ export default async function VisitPage({ params }: { params: Promise<{ token: s
   const day = when.toLocaleDateString("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric" });
   const time = when.toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
   const service = visit.service_type_label ?? humanizeEnum(visit.service_type);
-  const state = clientBookingActions(visit);
+  // Whether they can pick a new time themselves, and the company's notice
+  // period, which also decides whether a cancel happens at once.
+  const move = await visitMoveState(visit);
+  const state = clientBookingActions(visit, Date.now(), move.rules.noticeHours);
   const canAct = state.canNote || state.canSkip;
   const button = brandButtonColors(org?.brand_color);
 
@@ -133,7 +137,7 @@ export default async function VisitPage({ params }: { params: Promise<{ token: s
 
       <div className="mt-6">
         {canAct ? (
-          <VisitActions token={token} companyName={companyName} cancelsAtOnce={state.skipAutoApplies} button={button} />
+          <VisitActions token={token} companyName={companyName} cancelsAtOnce={state.skipAutoApplies} button={button} moveHref={move.allowed ? `/v/${token}/move` : null} />
         ) : (
           // After the client cancels from this page it reloads into this
           // state, so the sentence here is also their confirmation.

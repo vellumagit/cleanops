@@ -204,6 +204,14 @@ export async function saveOpenTimeRulesAction(_prev: OnlineBookingState, formDat
   // (an older tab) leaves it as it is.
   const mode = String(formData.get("time_booking") ?? "");
   const timeBooking = ["off", "approve", "instant"].includes(mode) ? mode : null;
+  // How late a client can change or cancel a visit themselves. A form that
+  // doesn't say leaves it as it is.
+  const noticeText = String(formData.get("change_notice_hours") ?? "").trim();
+  let changeNotice: number | null = null;
+  if (noticeText) {
+    if (!/^\d{1,3}$/.test(noticeText) || Number(noticeText) > 720) return { error: "Changes and cancellations: type a whole number of hours, up to 720." };
+    changeNotice = Number(noticeText);
+  }
 
   const { data: saved, error } = (await supabase
     .from("booking_pages" as never)
@@ -214,6 +222,7 @@ export async function saveOpenTimeRulesAction(_prev: OnlineBookingState, formDat
       gap_minutes: parsed.rules.gapMinutes,
       slot_step_minutes: parsed.rules.stepMinutes,
       ...(timeBooking ? { time_booking: timeBooking } : {}),
+      ...(changeNotice !== null ? { change_notice_hours: changeNotice } : {}),
     } as never)
     .eq("organization_id" as never, orgId as never)
     .select("slug")) as unknown as { data: Array<{ slug: string }> | null; error: { message: string } | null };

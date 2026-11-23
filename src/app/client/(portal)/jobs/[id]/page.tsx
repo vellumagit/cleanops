@@ -9,6 +9,8 @@ import { formatDate, formatDateTime, formatDurationMinutes, humanizeEnum } from 
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { clientBookingActions } from "@/lib/client-job-requests";
 import { ClientJobActions } from "./job-actions";
+import { visitMoveState } from "@/lib/visit-move";
+import { visitLinkFor } from "@/lib/visit-link";
 
 export const metadata = { title: "Your visit" };
 
@@ -129,7 +131,12 @@ export default async function ClientJobPage({
   };
   const said = saidRaw ?? [];
 
-  const state = clientBookingActions(booking);
+  // Whether they can pick a new time themselves, and the company's notice
+  // period, which also decides whether a skip happens at once.
+  const move = await visitMoveState({ ...booking, organization_id: client.organization_id, client_id: client.id, series_id: null });
+  const state = clientBookingActions(booking, Date.now(), move.rules.noticeHours);
+  // The picker lives on the visit's own private page.
+  const moveLink = move.allowed ? await visitLinkFor(booking.id) : null;
   const service = booking.service_type_label ?? humanizeEnum(booking.service_type);
 
   // Google Calendar template link — UTC basic timestamps; Google localizes
@@ -222,6 +229,18 @@ export default async function ClientJobPage({
           )}
         </dl>
       </div>
+
+      {moveLink && (
+        <Link
+          href={`${new URL(moveLink).pathname}/move`}
+          className="flex min-h-12 items-center justify-between rounded-xl border border-border bg-card px-5 text-base font-medium hover:bg-muted"
+        >
+          Move to another time
+          <span aria-hidden className="text-muted-foreground">
+            →
+          </span>
+        </Link>
+      )}
 
       <ClientJobActions
         bookingId={booking.id}

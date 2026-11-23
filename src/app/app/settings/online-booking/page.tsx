@@ -50,13 +50,14 @@ export default async function OnlineBookingPage({
   // database without those columns yet shows the page without this part.
   let rules: OpenTimeRules | null = null;
   let timeBooking: "off" | "approve" | "instant" = "off";
+  let changeNoticeHours = 48;
   let people: Array<{ id: string; name: string; role: string; takes: boolean }> = [];
   if (page) {
     try {
       const [rulesRes, peopleRes] = await Promise.all([
         admin
           .from("booking_pages" as never)
-          .select("opening_hours, min_notice_hours, max_days_ahead, gap_minutes, slot_step_minutes, time_booking")
+          .select("opening_hours, min_notice_hours, max_days_ahead, gap_minutes, slot_step_minutes, time_booking, change_notice_hours")
           .eq("organization_id" as never, orgId as never)
           .maybeSingle() as unknown as Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }>,
         admin
@@ -73,6 +74,8 @@ export default async function OnlineBookingPage({
       rules = rulesRes.data ? readRules(rulesRes.data) : DEFAULT_RULES;
       const mode = rulesRes.data?.time_booking;
       timeBooking = mode === "approve" || mode === "instant" ? mode : "off";
+      const notice = Number(rulesRes.data?.change_notice_hours);
+      if (Number.isFinite(notice) && notice >= 0) changeNoticeHours = notice;
       people = (peopleRes.data ?? [])
         .map((m) => ({ id: m.id, name: memberDisplayName(m), role: m.role, takes: m.takes_online_bookings === true }))
         // Cleaners first, then the office: the people most likely to be ticked.
@@ -127,7 +130,7 @@ export default async function OnlineBookingPage({
           />
           {page && rules && (
             <div className="max-w-2xl space-y-5">
-              <OpenTimesForm rules={rules} people={people} timeBooking={timeBooking} />
+              <OpenTimesForm rules={rules} people={people} timeBooking={timeBooking} changeNoticeHours={changeNoticeHours} />
               <OpenTimesPreview
                 organizationId={orgId}
                 services={services.map((s) => ({ id: s.id, name: s.name, minutes: s.default_duration_minutes }))}

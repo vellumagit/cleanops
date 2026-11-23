@@ -164,12 +164,16 @@ export async function skipVisit(client: RequestClient, booking: RequestVisit, re
   if (reason && detectCardNumber(reason)) return { error: CARD_DETECTED_MESSAGE };
   if (reason.length > MAX_NOTE) return { error: `Keep it under ${MAX_NOTE} characters.` };
 
-  const state = clientBookingActions(booking);
+  const admin = createSupabaseAdminClient();
+  // The company's own notice period (Settings, Online booking); 48 hours
+  // where it hasn't set one.
+  const { clientChangeRules } = await import("@/lib/visit-move");
+  const { noticeHours } = await clientChangeRules(booking.organization_id, admin);
+  const state = clientBookingActions(booking, Date.now(), noticeHours);
   if (!state.canSkip) {
     return { error: state.reason ?? "This visit can't be skipped here." };
   }
 
-  const admin = createSupabaseAdminClient();
   const tz = await getOrgTimezone(booking.organization_id);
   const nowIso = new Date().toISOString();
   const autoApplies = state.skipAutoApplies;

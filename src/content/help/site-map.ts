@@ -196,6 +196,7 @@ export const SITE_MAP: SitePage[] = [
   { path: "/e/[token]", name: "Estimate (client view)", where: "The link in an estimate email", area: "public" },
   { path: "/v/[token]", name: "A visit (client view)", where: "The button in a booking confirmation, reminder or reschedule email", area: "public" },
   { path: "/book/[slug]", name: "A company's booking page", where: "The link a company chooses in Settings → Clients → Online booking", area: "public" },
+  { path: "/v/[token]/move", name: "Move your clean (a client picks another day and time)", where: "Move to another time, on the page the See or change this visit button opens", area: "public" },
   { path: "/book/[slug]/time", name: "Book a clean (a visitor picks a day and a time)", where: "The Book a clean button on a company's booking page, when the company has switched it on", area: "public" },
   { path: "/c/[token]", name: "Contract to sign", where: "The link in a contract email", area: "public" },
   { path: "/i/[token]", name: "Invoice (client view)", where: "The link in an invoice email or text", area: "public" },
