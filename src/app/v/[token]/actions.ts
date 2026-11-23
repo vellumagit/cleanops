@@ -1,0 +1,40 @@
+"use server";
+
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
+import { visitByToken } from "@/lib/visit-link";
+import { askToMoveVisit, leaveVisitNote, skipVisit, type ClientJobActionState } from "@/lib/client-visit-requests";
+
+/**
+ * What a client can do from the private link in a booking email, with no
+ * sign-in: leave a note, ask to move the visit, cancel it. The same rules
+ * as the signed-in client area (lib/client-visit-requests.ts); the link is
+ * what proves the visit is theirs, so every action starts by resolving it.
+ */
+async function linked(formData: FormData) {
+  // A read that fails stops here; it is not taken for "no such visit".
+  enterFailClosed();
+  const limit = await checkIpRateLimit("visit-link-act", 20, 10 * 60_000);
+  if (!limit.allowed) return { error: "That's a lot of tries. Wait a few minutes and try again, or call us." } as const;
+  const visit = await visitByToken(String(formData.get("token") ?? ""));
+  if (!visit) return { error: "This link has stopped working. Call us and we'll help." } as const;
+  return { visit, client: { id: visit.client.id, name: visit.client.name } } as const;
+}
+
+export async function visitNoteAction(_prev: ClientJobActionState, formData: FormData): Promise<ClientJobActionState> {
+  const found = await linked(formData);
+  if ("error" in found) return { error: found.error };
+  return leaveVisitNote(found.client, found.visit, String(formData.get("body") ?? ""));
+}
+
+export async function visitMoveAction(_prev: ClientJobActionState, formData: FormData): Promise<ClientJobActionState> {
+  const found = await linked(formData);
+  if ("error" in found) return { error: found.error };
+  return askToMoveVisit(found.client, found.visit, String(formData.get("wish") ?? ""));
+}
+
+export async function visitCancelAction(_prev: ClientJobActionState, formData: FormData): Promise<ClientJobActionState> {
+  const found = await linked(formData);
+  if ("error" in found) return { error: found.error };
+  return skipVisit(found.client, found.visit, String(formData.get("reason") ?? ""));
+}

@@ -163,6 +163,27 @@ function button(label: string, href: string, color = DEFAULT_BRAND) {
 </table>`.trim();
 }
 
+/**
+ * The foot of a booking email: one button to the client's private page for
+ * that visit, where they can leave a note, ask to move it or cancel it.
+ * Without a link, the line the email always ended on.
+ */
+function manageBlock(manageUrl: string | null | undefined, brandColor: string | undefined, fallbackLine: string): string {
+  if (!manageUrl) {
+    return `<p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      ${fallbackLine}
+    </p>`;
+  }
+  return `<div style="margin:24px 0 0;">${button("See or change this visit", manageUrl, brandColor)}</div>
+    <p style="margin:12px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Leave a note for your cleaner, ask to move the visit, or cancel it. No password needed.
+    </p>`;
+}
+
+function manageText(manageUrl: string | null | undefined): string {
+  return manageUrl ? `\n\nSee or change this visit (leave a note, ask to move it, or cancel): ${manageUrl}` : "";
+}
+
 function escapeHtml(s: string): string {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -614,6 +635,12 @@ export function bookingConfirmationEmail(args: {
   crewNote?: string;
   brandColor?: string;
   logoUrl?: string;
+  /**
+   * The client's private link to this one visit (lib/visit-link.ts). With
+   * it the email carries a button; without it, the old "reply to this
+   * email" line, so a message can always be sent.
+   */
+  manageUrl?: string | null;
 }) {
   const subject = `Booking confirmed — ${args.orgName}`;
   const html = layout(
@@ -645,9 +672,7 @@ export function bookingConfirmationEmail(args: {
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.address)}</td>
       </tr>
     </table>
-    <p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      Need to reschedule? Reply to this email.
-    </p>
+    ${manageBlock(args.manageUrl, args.brandColor, "Need to reschedule? Reply to this email.")}
     `,
     {
       brandColor: args.brandColor,
@@ -656,7 +681,7 @@ export function bookingConfirmationEmail(args: {
       preheader: `${args.serviceName} · ${args.dateTime}`,
     },
   );
-  const text = `Booking confirmed — ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}${args.crewNote ? `\nCrew: ${args.crewNote}` : ""}\nWhere: ${args.address}`;
+  const text = `Booking confirmed — ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}${args.crewNote ? `\nCrew: ${args.crewNote}` : ""}\nWhere: ${args.address}${manageText(args.manageUrl)}`;
   return { subject, html, text };
 }
 
@@ -1523,6 +1548,12 @@ export function bookingReminderEmail(args: {
   crewNote?: string;
   brandColor?: string;
   logoUrl?: string;
+  /**
+   * The client's private link to this one visit (lib/visit-link.ts). With
+   * it the email carries a button; without it, the old "reply to this
+   * email" line, so a message can always be sent.
+   */
+  manageUrl?: string | null;
 }) {
   const subject = `Reminder: your ${args.serviceName} with ${args.orgName} is tomorrow`;
   const html = layout(
@@ -1554,9 +1585,7 @@ export function bookingReminderEmail(args: {
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.address)}</td>
       </tr>
     </table>
-    <p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      Need to reschedule or cancel? Reply to this email as soon as possible and we&rsquo;ll sort it out.
-    </p>
+    ${manageBlock(args.manageUrl, args.brandColor, "Need to reschedule or cancel? Reply to this email as soon as possible and we&rsquo;ll sort it out.")}
     `,
     {
       brandColor: args.brandColor,
@@ -1565,7 +1594,7 @@ export function bookingReminderEmail(args: {
       preheader: `${args.serviceName} · ${args.dateTime}`,
     },
   );
-  const text = `Reminder from ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}${args.crewNote ? `\nCrew: ${args.crewNote}` : ""}\nWhere: ${args.address}\n\nReply to reschedule.`;
+  const text = `Reminder from ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}${args.crewNote ? `\nCrew: ${args.crewNote}` : ""}\nWhere: ${args.address}${manageText(args.manageUrl) || "\n\nReply to reschedule."}`;
   return { subject, html, text };
 }
 
@@ -1785,6 +1814,12 @@ export function bookingRescheduledEmail(args: {
   address: string;
   brandColor?: string;
   logoUrl?: string;
+  /**
+   * The client's private link to this one visit (lib/visit-link.ts). With
+   * it the email carries a button; without it, the old "reply to this
+   * email" line, so a message can always be sent.
+   */
+  manageUrl?: string | null;
 }) {
   const subject = `Your booking has been rescheduled — ${args.orgName}`;
   const html = layout(
@@ -1811,9 +1846,7 @@ export function bookingRescheduledEmail(args: {
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.address)}</td>
       </tr>
     </table>
-    <p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      This time doesn't work? Reply to this email and we'll find another slot.
-    </p>
+    ${manageBlock(args.manageUrl, args.brandColor, "This time doesn't work? Reply to this email and we'll find another slot.")}
     `,
     {
       brandColor: args.brandColor,
@@ -1822,7 +1855,7 @@ export function bookingRescheduledEmail(args: {
       preheader: `Moved from ${args.oldDateTime} to ${args.newDateTime}`,
     },
   );
-  const text = `Booking rescheduled — ${args.orgName}\n\nService: ${args.serviceName}\nWas: ${args.oldDateTime}\nNow: ${args.newDateTime}\nWhere: ${args.address}\n\nReply to this email if the new time doesn't work.`;
+  const text = `Booking rescheduled — ${args.orgName}\n\nService: ${args.serviceName}\nWas: ${args.oldDateTime}\nNow: ${args.newDateTime}\nWhere: ${args.address}${manageText(args.manageUrl) || "\n\nReply to this email if the new time doesn't work."}`;
   return { subject, html, text };
 }
 

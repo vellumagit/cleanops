@@ -12,6 +12,7 @@ import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
 import type { OfficeTopic } from "@/lib/notification-topics";
+import { visitLinkFor } from "@/lib/visit-link";
 import { highEnd, priceRangeLabel } from "@/lib/estimate-lines";
 import { MIN_CHASED_BALANCE_CENTS, owedPastDueFilter } from "@/lib/invoice-balance";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -679,6 +680,7 @@ export async function sendBookingConfirmation(bookingId: string) {
         address: booking.address ?? "(address to be confirmed)",
         brandColor: org?.brand_color ?? undefined,
         logoUrl: org?.logo_url ?? undefined,
+        manageUrl: await visitLinkFor(booking.id),
       });
 
       const sent = await sendOrgEmail(booking.organization_id, {
@@ -913,6 +915,7 @@ export async function sendBookingRescheduled(
       address: booking.address ?? "(address on file)",
       brandColor: org?.brand_color ?? undefined,
       logoUrl: org?.logo_url ?? undefined,
+      manageUrl: await visitLinkFor(booking.id),
     });
 
     const sent = await sendOrgEmail(booking.organization_id, {
@@ -3052,6 +3055,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
         address: booking.address ?? "(address on file)",
         brandColor: cached.brand_color ?? undefined,
         logoUrl: cached.logo_url ?? undefined,
+        manageUrl: await visitLinkFor(booking.id),
       });
 
       // Two INDEPENDENT channels. Previously the SMS was nested inside the

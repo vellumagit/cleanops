@@ -193,6 +193,7 @@ export const SITE_MAP: SitePage[] = [
 
   // ─── Links people receive ──────────────────────────────────────────
   { path: "/e/[token]", name: "Estimate (client view)", where: "The link in an estimate email", area: "public" },
+  { path: "/v/[token]", name: "A visit (client view)", where: "The button in a booking confirmation, reminder or reschedule email", area: "public" },
   { path: "/c/[token]", name: "Contract to sign", where: "The link in a contract email", area: "public" },
   { path: "/i/[token]", name: "Invoice (client view)", where: "The link in an invoice email or text", area: "public" },
   { path: "/pay/[id]/success", name: "Payment received", where: "After a client pays online", area: "public" },

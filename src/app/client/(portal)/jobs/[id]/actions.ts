@@ -1,41 +1,29 @@
 "use server";
 
 import "server-only";
-import { revalidatePath } from "next/cache";
-import { after } from "next/server";
 import { requireClientAction } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { cancelJobs } from "@/lib/cancel-jobs";
-import { getOrgTimezone } from "@/lib/org-timezone";
-import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
-import { notify } from "@/lib/notify";
-import { formatDateTime } from "@/lib/format";
 import {
-  clientBookingActions,
-  occurrenceDate,
-} from "@/lib/client-job-requests";
+  askToMoveVisit,
+  leaveVisitNote,
+  skipVisit,
+  type ClientJobActionState,
+  type RequestVisit,
+} from "@/lib/client-visit-requests";
 
-export type ClientJobActionState = { ok?: boolean; error?: string };
+export type { ClientJobActionState } from "@/lib/client-visit-requests";
 
 /**
- * Everything a portal client can do to a booking they already have.
+ * Everything a signed-in client can do to a visit they already have. The
+ * rules live in lib/client-visit-requests.ts, shared with the private link
+ * in booking emails (app/v/[token]); this file is the signed-in door.
  *
- * Both actions use the admin client after requireClientAction(), matching the rule
- * the booking-request flow already documents: the portal writes through server
- * actions only, never through client-side RLS. There is deliberately no client
- * INSERT policy on client_job_requests — Postgres RLS has no OLD/NEW pair, so
- * a client UPDATE policy would grant every column on every row it admits, and
- * eligibility here is time-dependent anyway, which is imperative logic rather
- * than a predicate.
- *
- * Ownership is therefore proven in code, twice: requireClientAction() resolves the
- * session to one clients row, and every query is scoped by that client_id.
+ * Ownership is proven here, twice: requireClientAction() resolves the
+ * session to one clients row, and the visit is loaded by that client_id.
  */
 
-const MAX_NOTE = 1000;
-
 /** Load the booking and prove this client owns it. Returns null otherwise. */
-async function ownedBooking(bookingId: string, clientId: string) {
+async function ownedBooking(bookingId: string, clientId: string): Promise<RequestVisit | null> {
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
     .from("bookings")
@@ -44,274 +32,33 @@ async function ownedBooking(bookingId: string, clientId: string) {
     )
     .eq("id", bookingId)
     .eq("client_id", clientId)
-    .maybeSingle()) as unknown as {
-    data: {
-      id: string;
-      organization_id: string;
-      client_id: string;
-      series_id: string | null;
-      scheduled_at: string;
-      status: string;
-      archived_at: string | null;
-      assigned_to: string | null;
-      address: string | null;
-      service_type_label: string | null;
-      service_type: string;
-    } | null;
-  };
+    .maybeSingle()) as unknown as { data: RequestVisit | null };
   return data;
 }
 
-/** Everyone assigned to this visit — primary plus crew. */
-async function assigneeIds(bookingId: string, primary: string | null) {
-  const admin = createSupabaseAdminClient();
-  const { data } = (await admin
-    .from("booking_assignees")
-    .select("membership_id")
-    .eq("booking_id", bookingId)) as unknown as {
-    data: Array<{ membership_id: string }> | null;
-  };
-  const ids = new Set((data ?? []).map((r) => r.membership_id));
-  if (primary) ids.add(primary);
-  return [...ids];
-}
-
-/**
- * A note for one visit — "skip the bathroom this week".
- *
- * Goes to the crew AND to the office. The cleaner is the one who has to act
- * on it, so their push carries the field link. The office gets an FYI with
- * the booking link — originally this was deliberately silent to keep notes
- * off the owner's phone, but an owner who finds out at invoice time that a
- * visit was quietly renegotiated trusts the portal less, not more. Awareness
- * is not workload.
- */
-export async function leaveJobNoteAction(
-  _prev: ClientJobActionState,
-  formData: FormData,
-): Promise<ClientJobActionState> {
+export async function leaveJobNoteAction(_prev: ClientJobActionState, formData: FormData): Promise<ClientJobActionState> {
   const client = await requireClientAction();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
-  const body = String(formData.get("body") ?? "").trim();
-
   if (!bookingId) return { error: "Missing job." };
-  if (!body) return { error: "Write a note first." };
-  if (body.length > MAX_NOTE) {
-    return { error: `Keep it under ${MAX_NOTE} characters.` };
-  }
-  // Same guard the booking-request form uses — clients do sometimes type a
-  // card number into a free-text box, and it must not land in the database.
-  if (detectCardNumber(body)) return { error: CARD_DETECTED_MESSAGE };
-
   const booking = await ownedBooking(bookingId, client.id);
   if (!booking) return { error: "Job not found." };
-
-  const state = clientBookingActions(booking);
-  if (!state.canNote) {
-    return { error: state.reason ?? "You can't add a note to this job." };
-  }
-
-  const admin = createSupabaseAdminClient();
-  const tz = await getOrgTimezone(booking.organization_id);
-
-  // `as never` because client_job_requests postdates the generated Supabase
-  // types — the same idiom booking_requests uses in the sibling action.
-  const { error } = (await admin.from("client_job_requests" as never).insert({
-    organization_id: booking.organization_id,
-    client_id: client.id,
-    booking_id: booking.id,
-    series_id: booking.series_id,
-    occurrence_date: occurrenceDate(booking.scheduled_at, tz),
-    kind: "job_note",
-    body,
-    // A note is not a decision anyone has to make, so it never sits in the
-    // office queue waiting to be actioned.
-    status: "resolved",
-    resolved_at: new Date().toISOString(),
-    auto_applied: true,
-  } as never)) as unknown as { error: { message: string } | null };
-  if (error) return { error: error.message };
-
-  // Deferred so the client's tap returns straight away — notify() sends
-  // pushes, and none of that is theirs to wait for.
-  after(async () => {
-    const when = formatDateTime(booking.scheduled_at, tz);
-    const service =
-      booking.service_type_label ?? booking.service_type.replace(/_/g, " ");
-    const excerpt = `${body.slice(0, 160)}${body.length > 160 ? "…" : ""}`;
-
-    // The crew acts on it — their link opens the field job.
-    const crew = await assigneeIds(booking.id, booking.assigned_to);
-    for (const membershipId of crew) {
-      await notify({
-        organizationId: booking.organization_id,
-        audience: "membership",
-        membershipId,
-        type: "client_request",
-        title: `Note from ${client.name}`,
-        body: `${excerpt} — for ${when}.`,
-        href: `/field/jobs/${booking.id}`,
-      });
-    }
-
-    // The office hears about it — their link opens the booking. Also the
-    // only alert anyone gets when the visit has no crew assigned yet, in
-    // which case somebody in the office HAS to carry the note forward.
-    await notify({
-      organizationId: booking.organization_id,
-      audience: "org-management",
-      topic: "clients",
-      type: "client_request",
-      title: `New note from ${client.name}`,
-      body: `"${excerpt}" — ${service} on ${when}.`,
-      href: `/app/bookings/${booking.id}`,
-    });
-  });
-
-  revalidatePath(`/client/jobs/${booking.id}`);
-  revalidatePath(`/field/jobs/${booking.id}`);
-  revalidatePath(`/app/bookings/${booking.id}`);
-  return { ok: true };
+  return leaveVisitNote(client, booking, String(formData.get("body") ?? ""));
 }
 
-/**
- * Skip one visit.
- *
- * Far enough out and it simply happens — the office is told, not asked. Close
- * in, the crew is already committed and the slot is hard to refill, so it
- * becomes a request a human answers. The boundary lives in
- * SKIP_AUTO_APPLY_HOURS so the button the client sees and the rule the server
- * applies can never disagree.
- */
-export async function requestSkipAction(
-  _prev: ClientJobActionState,
-  formData: FormData,
-): Promise<ClientJobActionState> {
+export async function requestSkipAction(_prev: ClientJobActionState, formData: FormData): Promise<ClientJobActionState> {
   const client = await requireClientAction();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
-  const reason = String(formData.get("reason") ?? "").trim();
   if (!bookingId) return { error: "Missing job." };
-  if (reason && detectCardNumber(reason))
-    return { error: CARD_DETECTED_MESSAGE };
-
   const booking = await ownedBooking(bookingId, client.id);
   if (!booking) return { error: "Job not found." };
+  return skipVisit(client, booking, String(formData.get("reason") ?? ""));
+}
 
-  const state = clientBookingActions(booking);
-  if (!state.canSkip) {
-    return { error: state.reason ?? "This visit can't be skipped here." };
-  }
-
-  const admin = createSupabaseAdminClient();
-  const tz = await getOrgTimezone(booking.organization_id);
-  const nowIso = new Date().toISOString();
-  const autoApplies = state.skipAutoApplies;
-
-  // Recorded OPEN first, and marked resolved only once the booking is
-  // actually cancelled. Written resolved up front, a failed cancel left the
-  // portal saying "Cancelled" over a visit still on the schedule; an open
-  // request at least reaches the office queue.
-  const { data: req, error: reqErr } = (await admin
-    .from("client_job_requests" as never)
-    .insert({
-      organization_id: booking.organization_id,
-      client_id: client.id,
-      booking_id: booking.id,
-      series_id: booking.series_id,
-      occurrence_date: occurrenceDate(booking.scheduled_at, tz),
-      kind: "skip_occurrence",
-      body: reason || null,
-      status: "open",
-      resolved_at: null,
-      auto_applied: false,
-    } as never)
-    .select("id")
-    .single()) as unknown as { data: { id: string } | null; error: { message: string } | null };
-  if (reqErr || !req) return { error: reqErr?.message ?? "Couldn't record the request." };
-
-  if (autoApplies) {
-    // Cancel rather than delete. skipBookingOccurrenceAction hard-deletes and
-    // writes booking_series.skip_dates, which is right when an OWNER edits a
-    // schedule — but it would erase the record of what the client asked for,
-    // and it permanently removes this date from the standing series. A client
-    // skipping one week has not changed their contract.
-    // Through the one cancel path. The client is the actor, so the history
-    // row has no member on it and says "client_skip". Own wording for the
-    // office and crew below, so no standard notices. Calendars after the
-    // response: the visit comes off the cleaners' and the company's Google
-    // Calendars without the client waiting on Google.
-    const res = await cancelJobs({
-      organizationId: booking.organization_id,
-      bookingIds: [booking.id],
-      clientId: client.id,
-      fromStatuses: ["pending", "confirmed"],
-      via: "client_skip",
-      syncReason: "client_skip",
-      actorId: null,
-      calendars: "all",
-      notices: "none",
-      defer: true,
-    });
-    if (res.error) return { error: res.error };
-    if (res.cancelled.length === 0) {
-      return { error: "This visit changed a moment ago and can't be skipped here now. Reload the page." };
-    }
-    // An auto-applied skip has happened, so it is not a decision anyone has
-    // to make — the office queue only holds open questions.
-    const { error: resolveErr } = await admin
-      .from("client_job_requests" as never)
-      .update({ status: "resolved", resolved_at: nowIso, auto_applied: true } as never)
-      .eq("id", req.id);
-    if (resolveErr) {
-      console.error("[portal] skip applied but its request stayed open:", resolveErr.message);
-    }
-  }
-
-  after(async () => {
-    const when = formatDateTime(booking.scheduled_at, tz);
-    const service = booking.service_type_label ?? booking.service_type;
-
-    // The office. On an auto-applied skip this is the only signal they get,
-    // so it is not optional — but it is information, not a task.
-    await notify({
-      organizationId: booking.organization_id,
-      audience: "org-management",
-      topic: "clients",
-      type: "client_request",
-      title: autoApplies
-        ? `${client.name} skipped a visit`
-        : `${client.name} asked to skip a visit`,
-      body: autoApplies
-        ? `${service} on ${when} is cancelled at the client's request.${reason ? ` They said: “${reason}”.` : ""}`
-        : `${service} on ${when} — too close to auto-cancel, so it needs your call.${reason ? ` They said: “${reason}”.` : ""}`,
-      href: `/app/bookings/${booking.id}`,
-      // A skip inside the window is time-critical; one far out is not.
-      channels: autoApplies ? undefined : { email: true },
-    });
-
-    // The crew only when it actually happened. Telling a cleaner about a
-    // request that may be declined would have them plan around a visit that
-    // is still going ahead.
-    if (autoApplies) {
-      const crew = await assigneeIds(booking.id, booking.assigned_to);
-      for (const membershipId of crew) {
-        await notify({
-          organizationId: booking.organization_id,
-          audience: "membership",
-          membershipId,
-          type: "client_request",
-          title: "A job was cancelled",
-          body: `${client.name} on ${when} — the client skipped this visit.`,
-          href: "/field/shifts",
-        });
-      }
-    }
-  });
-
-  revalidatePath(`/client/jobs/${booking.id}`);
-  revalidatePath("/client/jobs");
-  revalidatePath("/client");
-  revalidatePath(`/app/bookings/${booking.id}`);
-  revalidatePath("/app/bookings");
-  return { ok: true };
+export async function askToMoveAction(_prev: ClientJobActionState, formData: FormData): Promise<ClientJobActionState> {
+  const client = await requireClientAction();
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  if (!bookingId) return { error: "Missing job." };
+  const booking = await ownedBooking(bookingId, client.id);
+  if (!booking) return { error: "Job not found." };
+  return askToMoveVisit(client, booking, String(formData.get("wish") ?? ""));
 }
