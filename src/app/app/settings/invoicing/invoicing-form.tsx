@@ -14,6 +14,7 @@ import {
   describeSendSchedule,
   type SendMode,
 } from "@/lib/invoice-send-schedule";
+import { keepFormOnSave } from "@/lib/keep-form-on-save";
 
 const empty: InvoicingFormState = {};
 
@@ -79,7 +80,7 @@ export function InvoicingForm(props: InvoicingFormProps) {
   });
 
   return (
-    <form action={formAction} className="max-w-lg space-y-6">
+    <form onReset={keepFormOnSave} action={formAction} className="max-w-lg space-y-6">
       <FormError message={state.errors?._form} />
 
       {state.success && (

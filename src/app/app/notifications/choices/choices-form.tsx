@@ -6,6 +6,7 @@ import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { OFFICE_TOPICS, type OfficeTopic } from "@/lib/notification-topics";
 import { saveMyNotificationChoicesAction, type NotificationChoicesState } from "./actions";
+import { keepFormOnSave } from "@/lib/keep-form-on-save";
 
 const empty: NotificationChoicesState = {};
 
@@ -34,7 +35,7 @@ export function NotificationChoicesForm({ muted }: { muted: OfficeTopic[] }) {
   const quiet = OFFICE_TOPICS.length - alerting.size;
 
   return (
-    <form action={formAction} className="max-w-2xl space-y-5">
+    <form onReset={keepFormOnSave} action={formAction} className="max-w-2xl space-y-5">
       <FormError message={state.error} />
 
       <ul className="divide-y divide-border rounded-lg border border-border bg-card">

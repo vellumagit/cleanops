@@ -7,6 +7,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { STEP_CHOICES, SUGGESTED_HOURS, WEEKDAYS } from "@/lib/open-time-rules";
 import type { Hours, OpenTimeRules } from "@/lib/open-times";
 import { saveOpenTimeRulesAction, type OnlineBookingState } from "./actions";
+import { keepFormOnSave } from "@/lib/keep-form-on-save";
 
 const empty: OnlineBookingState = {};
 
@@ -39,7 +40,7 @@ export function OpenTimesForm({
   const ticked = people.filter((p) => p.takes).length;
 
   return (
-    <form action={save} className="space-y-5 rounded-lg border border-border bg-card p-5">
+    <form onReset={keepFormOnSave} action={save} className="space-y-5 rounded-lg border border-border bg-card p-5">
       <div>
         <h2 className="text-base font-semibold">When you can be booked</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">

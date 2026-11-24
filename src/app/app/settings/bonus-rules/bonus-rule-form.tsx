@@ -10,6 +10,7 @@ import {
   upsertBonusRuleAction,
   type BonusRuleFormState,
 } from "./actions";
+import { keepFormOnSave } from "@/lib/keep-form-on-save";
 
 const empty: BonusRuleFormState = {};
 
@@ -62,7 +63,7 @@ export function BonusRuleForm({
   }, [state]);
 
   return (
-    <form action={formAction} className="space-y-8">
+    <form onReset={keepFormOnSave} action={formAction} className="space-y-8">
       <FormError message={state.errors?._form} />
 
       {/* ── REVIEW BONUSES ── */}

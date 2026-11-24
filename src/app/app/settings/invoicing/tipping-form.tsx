@@ -5,6 +5,7 @@ import { CheckCircle2 } from "lucide-react";
 import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { saveTippingAction, type TippingFormState } from "./actions";
+import { keepFormOnSave } from "@/lib/keep-form-on-save";
 
 const empty: TippingFormState = {};
 
@@ -45,7 +46,7 @@ export function TippingForm(props: {
   };
 
   return (
-    <form action={formAction} className="max-w-lg space-y-5">
+    <form onReset={keepFormOnSave} action={formAction} className="max-w-lg space-y-5">
       <FormError message={state.errors?._form} />
 
       {state.success && (
