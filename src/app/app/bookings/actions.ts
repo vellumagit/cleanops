@@ -20,7 +20,7 @@ import {
 import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
 import { crewEligibility } from "@/lib/crew-eligibility";
-import { clashesFor, describeDoubleBooking, explainDoubleBooking } from "@/lib/crew-clashes";
+import { clashesFor, clashesOnVisit, describeDoubleBooking, explainDoubleBooking } from "@/lib/crew-clashes";
 import {
   clashKey,
   isDoubleBookingError,
@@ -3552,7 +3552,16 @@ function utcToOrgLocalParts(
 export async function convertBookingToRecurringAction(
   bookingId: string,
   formData: FormData,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  | {
+      ok: true;
+      /** Set when someone on the crew has another job on some of the new
+       *  dates: they were left off those visits, which are marked "Needs
+       *  cover". The bookings list shows which, under `?cover=<this>`. */
+      coverSeriesId?: string;
+    }
+  | { ok: false; error: string }
+> {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) {
     return { ok: false, error: "You don't have permission." };
@@ -3606,6 +3615,44 @@ export async function convertBookingToRecurringAction(
     orgTz,
   );
 
+  // Everyone on this visit, not only its lead. The new visits used to get
+  // the lead alone, so a two-person job made recurring became a one-person
+  // job from its second visit on. People who are no longer active are left
+  // behind. A visit with per-cleaner times keeps the old behaviour (the
+  // lead, for the whole visit): a series made this way has no windows.
+  let additionalIds: string[] = [];
+  {
+    const admin = createSupabaseAdminClient();
+    const { data: sourceCrew, error: sourceCrewErr } = (await admin
+      .from("booking_assignees")
+      .select("membership_id, split_index")
+      .eq("booking_id", bookingId)
+      .eq("organization_id", membership.organization_id)) as unknown as {
+      data: Array<{ membership_id: string; split_index: number | null }> | null;
+      error: { message: string } | null;
+    };
+    if (sourceCrewErr) return { ok: false, error: `Couldn't read this visit's crew: ${sourceCrewErr.message}` };
+    const others = [
+      ...new Set((sourceCrew ?? []).map((r) => r.membership_id).filter((m) => m !== booking.assigned_to)),
+    ];
+    const hasWindows = (sourceCrew ?? []).some((r) => r.split_index != null);
+    if (!hasWindows && others.length > 0) {
+      const { data: activeRows, error: activeErr } = (await admin
+        .from("memberships")
+        .select("id")
+        .eq("organization_id", membership.organization_id)
+        .eq("status", "active")
+        .in("id", others)) as unknown as {
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      };
+      if (activeErr) return { ok: false, error: `Couldn't read this visit's crew: ${activeErr.message}` };
+      const active = new Set((activeRows ?? []).map((r) => r.id));
+      additionalIds = others.filter((m) => active.has(m));
+    }
+  }
+  const seriesCrewIds = [booking.assigned_to, ...additionalIds].filter((m): m is string => !!m);
+
   const { data: series, error: seriesErr } = (await supabase
     .from("booking_series")
     .insert({
@@ -3633,6 +3680,9 @@ export async function convertBookingToRecurringAction(
       // saved; dropping it here made every "make recurring" series (and all
       // its cron-generated occurrences) propertyless.
       property_id: booking.property_id,
+      // The whole crew, so the nightly top-up makes each new visit with
+      // everyone on it (lib/series-crew.ts).
+      crew: crewFromForm({ primaryId: booking.assigned_to, additionalIds, splits: [] }),
     } as never)
     .select("id")
     .single()) as unknown as {
@@ -3707,12 +3757,19 @@ export async function convertBookingToRecurringAction(
     new Date(booking.scheduled_at),
   );
 
+  /** New visits where someone on the crew was left off for another job. */
+  let seriesCover: CoverVisit[] = [];
   if (occurrences.length > 0) {
+    // The visits go in with nobody on them, and the crew is put on in one
+    // save below, as a new series does. That save leaves someone with
+    // another job on one of the dates off that visit and marks it "Needs
+    // cover". Until 2026-11-24 the lead rode in on these rows, and one
+    // clash on any date refused the whole conversion.
     const rows = occurrences.map((scheduled_at) => ({
       organization_id: booking.organization_id,
       client_id: booking.client_id,
       package_id: booking.package_id,
-      assigned_to: booking.assigned_to,
+      assigned_to: null,
       scheduled_at,
       duration_minutes: booking.duration_minutes,
       service_type: booking.service_type as ServiceTypeEnum,
@@ -3741,44 +3798,40 @@ export async function convertBookingToRecurringAction(
       error: { message: string } | null;
     };
     if (insertErr) {
-      // The new visits carry this booking's cleaner, and one clash on any
-      // date refuses them all. Name the dates, as a new series does.
-      const clash =
-        isDoubleBookingError(insertErr) && booking.assigned_to
-          ? await explainDoubleBooking(
-              createSupabaseAdminClient(),
-              membership.organization_id,
-              rows.map((r) => ({
-                bookingId: null,
-                scheduledAt: r.scheduled_at,
-                durationMinutes: r.duration_minutes,
-                crew: [{ membershipId: booking.assigned_to as string }],
-              })),
-            )
-          : null;
       return {
         ok: false,
-        error: await rollbackFailedConversion(clash ?? insertErr.message),
+        error: await rollbackFailedConversion(insertErr.message),
       };
     }
     const newRows = inserted ?? [];
     const newIds = newRows.map((r) => r.id);
 
     if (newIds.length > 0) {
-      const newCrewErr = await syncBookingAssigneesBulk(
-        supabase,
-        membership.organization_id,
-        newIds,
-        booking.assigned_to,
-        [],
-        [],
-      );
-      if (newCrewErr) {
-        return {
-          ok: false,
-          error: await rollbackFailedConversion(newCrewErr),
-        };
+      if (seriesCrewIds.length > 0) {
+        const newCrewErr = await syncBookingAssigneesBulk(
+          supabase,
+          membership.organization_id,
+          newIds,
+          booking.assigned_to,
+          additionalIds,
+          [],
+          { assigned_to: booking.assigned_to },
+          { skipClashes: true },
+        );
+        if (newCrewErr) {
+          return {
+            ok: false,
+            error: await rollbackFailedConversion(newCrewErr),
+          };
+        }
+        try {
+          seriesCover = await loadCoverNeeded(membership.organization_id, { bookingIds: newIds });
+        } catch (err) {
+          // The series is made either way; the marks are on the visits.
+          console.error("[bookings] could not read which visits need cover:", err);
+        }
       }
+      const leftOff = leftOffByBooking(seriesCover);
 
       const labels = await getBookingLabels(
         supabase,
@@ -3799,6 +3852,18 @@ export async function convertBookingToRecurringAction(
           }).catch((err) =>
             console.error("[gcal] make-recurring create:", err),
           );
+          // Each cleaner's own calendar, and not for someone left off
+          // this visit. These visits were never put there before.
+          const onThisVisit = seriesCrewIds.filter((m) => !leftOff.get(rb.id)?.has(m));
+          await syncMemberCalendarEvents(rb.id, onThisVisit, {
+            id: rb.id,
+            scheduled_at: rb.scheduled_at,
+            duration_minutes: booking.duration_minutes,
+            service_type: booking.service_type,
+            address: booking.address,
+            notes: booking.notes,
+            client_name: labels.clientName,
+          }).catch(() => {});
         }
       });
     }
@@ -3807,7 +3872,8 @@ export async function convertBookingToRecurringAction(
   revalidatePath(`/app/bookings/${bookingId}`);
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
-  return { ok: true };
+  revalidatePath("/app/scheduling");
+  return seriesCover.length > 0 ? { ok: true, coverSeriesId: series.id } : { ok: true };
 }
 
 
@@ -3847,7 +3913,14 @@ export async function markBookingCompleteAction(id: string) {
  */
 export async function setBookingStatusAction(
   formData: FormData,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{
+  ok: boolean;
+  error?: string;
+  /** Set when bringing a cancelled visit back was refused because someone
+   *  on its crew has another job at that time now, and this person may keep
+   *  the overlap: post it back as `confirm_overlap` (Book anyway). */
+  bookAnyway?: string;
+}> {
   const id = String(formData.get("id") ?? "").trim();
   const target = String(formData.get("status") ?? "").trim();
   if (!id) return { ok: false, error: "Missing booking." };
@@ -3956,16 +4029,44 @@ export async function setBookingStatusAction(
     return { ok: true };
   }
 
-  const { error } = await supabase
-    .from("bookings")
-    .update({
-      status: target as WritableBookingStatus,
-      // Completed by hand is a close; anything else reopens it.
-      closed_at: target === "completed" ? new Date().toISOString() : null,
-      closed_by: target === "completed" ? membership.id : null,
-    } as never)
-    .eq("id", id)
-    .eq("organization_id", membership.organization_id);
+  // Book anyway, for a cancelled visit being brought back: the press posts
+  // the key of the clashes it was shown, and the save keeps the overlap only
+  // while those are still the clashes (as on the booking form).
+  const postedOverlap = String(formData.get("confirm_overlap") ?? "");
+  let keptOverlap: CrewClash[] | null = null;
+  if (booking.status === "cancelled" && postedOverlap && mayBookAnyway(membership.role)) {
+    try {
+      const now = await clashesOnVisit(createSupabaseAdminClient(), membership.organization_id, id, {
+        asIfLive: true,
+      });
+      if (now.length > 0 && clashKey(now) === postedOverlap) keptOverlap = now;
+    } catch (err) {
+      console.error("[bookings] could not re-check the clashes for bringing a visit back:", err);
+    }
+  }
+
+  const statusPatch = {
+    status: target as WritableBookingStatus,
+    // Completed by hand is a close; anything else reopens it.
+    closed_at: target === "completed" ? new Date().toISOString() : null,
+    closed_by: target === "completed" ? membership.id : null,
+  };
+  const { error } = keptOverlap
+    ? await createSupabaseAdminClient().rpc(
+        "update_booking_assignments_allow_clashes" as "update_booking_assignments_v2",
+        {
+          p_organization_id: membership.organization_id,
+          p_booking_ids: [id],
+          p_booking_patch: statusPatch as unknown as Json,
+          // null: the crew stays exactly as it was when the visit was cancelled.
+          p_assignees: null as unknown as Json,
+        },
+      )
+    : await supabase
+        .from("bookings")
+        .update(statusPatch as never)
+        .eq("id", id)
+        .eq("organization_id", membership.organization_id);
   if (error) {
     // Bringing a cancelled job back puts its crew back on the calendar, and
     // the database checks them in full: someone may have been given another
@@ -3984,13 +4085,39 @@ export async function setBookingStatusAction(
           split_duration_minutes: number | null;
         }> | null;
       };
-      const clash = await overlapExplanation(membership.organization_id, crewRows ?? [], {});
+      // The clashes come back too, so an owner, admin or manager can keep
+      // the overlap (Book anyway) and sort the other job out after.
+      const handling: ClashHandling = { canBookAnyway: mayBookAnyway(membership.role) };
+      const clash = await overlapExplanation(membership.organization_id, crewRows ?? [], {}, handling);
+      // The key is read the same way the press is checked above, so the two
+      // can only differ when the clashes themselves have changed.
+      let key = "";
+      if (handling.canBookAnyway && handling.found && handling.found.length > 0) {
+        try {
+          const found = await clashesOnVisit(createSupabaseAdminClient(), membership.organization_id, id, {
+            asIfLive: true,
+          });
+          if (found.length > 0) key = clashKey(found);
+        } catch (err) {
+          console.error("[bookings] could not read the clashes for bringing a visit back:", err);
+        }
+      }
       return {
         ok: false,
         error: clash ?? "Someone on this job's crew is booked on another job at that time now. Change the crew or the time, then bring it back.",
+        ...(key ? { bookAnyway: key } : {}),
       };
     }
     return { ok: false, error: error.message };
+  }
+  if (keptOverlap) {
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "booking",
+      entity_id: id,
+      after: { booked_over_clash: clashAudit(keptOverlap), via: "book_anyway_status" },
+    });
   }
 
   // Status is the booking's most consequential field (completed invoices;

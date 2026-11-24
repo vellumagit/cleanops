@@ -104,6 +104,8 @@ When someone has given notice, open their edit page and set **Last working day**
 - Any visit they were already on after that date loses them the moment you save the date, and is marked **Needs cover** on Bookings so you can pick someone else.
 - The crew picker shows them as unavailable for those dates, and your online booking page stops offering their times.
 
+A recurring series they are on still names them: each new batch of visits after the date is made without them until the series gets a new crew. The **Last working day** card lists those series, each with a link to the visit to open. There, press **Change crew**, pick who takes over, and choose **This and all future**.
+
 Their profile shows a **Last day** tag. **Clear** removes the date; the visits they came off stay as they are. Once they've gone, disable them as below.
 
 ## When someone leaves

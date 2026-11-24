@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,10 +30,21 @@ export function LastWorkingDayCard({
   memberId,
   memberName,
   current,
+  stillOnSeries = [],
 }: {
   memberId: string;
   memberName: string;
   current: string | null;
+  /** Recurring series that still name this person and go on past the last
+   *  day (series-naming-member.ts). Empty when no date is set. */
+  stillOnSeries?: Array<{
+    seriesId: string;
+    clientName: string;
+    frequency: string;
+    visitId: string | null;
+    visitLabel: string | null;
+    visitIsAfterLastDay: boolean;
+  }>;
 }) {
   const [value, setValue] = useState(current ?? "");
   const [pending, startTransition] = useTransition();
@@ -73,6 +85,41 @@ export function LastWorkingDayCard({
         <p className="mt-3 text-sm">
           {memberName}&rsquo;s last working day is <strong>{longDay(current)}</strong>.
         </p>
+      )}
+      {current && stillOnSeries.length > 0 && (
+        <div
+          className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+          data-testid="still-on-series"
+        >
+          <p className="font-medium">
+            {memberName} is still on the crew of {stillOnSeries.length} recurring{" "}
+            series.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            New visits after the last day are made without them until the series gets a new crew. Open a
+            visit below, press Change crew, pick who takes over, and choose &ldquo;This and all future&rdquo;.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {stillOnSeries.map((s) => (
+              <li key={s.seriesId} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
+                <span>
+                  {s.clientName} <span className="text-muted-foreground">· {s.frequency}</span>
+                </span>
+                {s.visitId ? (
+                  <Link
+                    href={`/app/bookings/${s.visitId}`}
+                    className="text-xs font-medium underline underline-offset-2"
+                  >
+                    {s.visitIsAfterLastDay ? "Open the first visit after" : "Open the latest visit"}
+                    {s.visitLabel ? ` (${s.visitLabel})` : ""}
+                  </Link>
+                ) : (
+                  <span className="text-xs text-muted-foreground">No visit coming up</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <form
         className="mt-3 flex flex-wrap items-end gap-2"

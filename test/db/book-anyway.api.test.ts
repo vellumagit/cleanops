@@ -493,4 +493,130 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
       cover: [marks[1]],
     });
   });
+
+  it("bringing a cancelled visit back: refused with a key, kept with it, and never past a last working day", async () => {
+    const s = await setUp();
+    // Amanda's visit was cancelled; since then Olha was put on Leslie's job
+    // at the same time.
+    const id = await addBooking(api.sql, s.org, s.amanda, { scheduledAt: at(s.day, 10), durationMinutes: 240, status: "cancelled" });
+    await api.sql(
+      "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary) values ($1, $2, $3, true)",
+      [s.org, id, s.olha.membershipId],
+    );
+    await api.sql("update public.bookings set assigned_to = $2 where id = $1", [id, s.olha.membershipId]);
+    const status = async () => (await api.sql<{ status: string }>("select status from public.bookings where id = $1", [id]))[0].status;
+    const bringBack = (as: Member, key?: string) => {
+      const f = new FormData();
+      f.set("id", id);
+      f.set("status", "confirmed");
+      if (key) f.set("confirm_overlap", key);
+      return s.press(as, () => bookings.setBookingStatusAction(f)) as unknown as Promise<{
+        ok: boolean;
+        error?: string;
+        bookAnyway?: string;
+      }>;
+    };
+
+    const refused = await bringBack(s.owner);
+    expect(refused.ok, api.log()).toBe(false);
+    expect(refused.error).toMatch(/Olha/);
+    expect(refused.error).toMatch(/Leslie Saumer/);
+    expect(refused.bookAnyway).toBeTruthy();
+    expect(await status()).toBe("cancelled");
+
+    // A key for other clashes is not a yes for these.
+    const wrong = await bringBack(s.owner, "not-the-key");
+    expect(wrong.ok).toBe(false);
+    expect(await status()).toBe("cancelled");
+
+    // A manager may keep the overlap, as on every other Book anyway.
+    const kept = await bringBack(s.manager, refused.bookAnyway);
+    expect(kept, api.log()).toMatchObject({ ok: true });
+    expect(await status()).toBe("confirmed");
+    expect(await s.visit(id)).toMatchObject({ lead: s.olha.membershipId, crew: [s.olha.membershipId] });
+    const audit = await api.sql<{ after: { via?: string } | null }>(
+      "select after from public.audit_log where entity_id = $1 and organization_id = $2",
+      [id, s.org],
+    );
+    expect(audit.some((a) => a.after?.via === "book_anyway_status")).toBe(true);
+
+    // Cancelled again, and Olha has since finished: the key does not get
+    // her back on a visit after her last day.
+    await api.sql("update public.bookings set status = 'cancelled' where id = $1", [id]);
+    await api.sql("update public.memberships set last_working_day = $2 where id = $1", [
+      s.olha.membershipId,
+      at(s.day - 1, 9).slice(0, 10),
+    ]);
+    const finished = await bringBack(s.owner, refused.bookAnyway);
+    expect(finished.ok).toBe(false);
+    expect(await status()).toBe("cancelled");
+  });
+
+  it("Make recurring: the whole crew comes along, and a busy date leaves them off that visit instead of refusing", async () => {
+    const s = await setUp();
+    // Amanda's one-off visit, two weeks before Leslie's job, Olha and Vira
+    // on it. Made weekly, its third visit lands on Leslie's day.
+    const source = await s.amandaVisit(10, [s.olha, s.vira], s.day - 14);
+    const f = new FormData();
+    f.set("pattern", "weekly");
+    const made = (await s.press(s.owner, () => bookings.convertBookingToRecurringAction(source, f))) as unknown as {
+      ok: boolean;
+      error?: string;
+      coverSeriesId?: string;
+    };
+    expect(made.ok, `${made.error ?? ""} ${api.log()}`).toBe(true);
+    expect(made.coverSeriesId).toBeTruthy();
+
+    const [series] = await api.sql<{ id: string; crew: Array<{ membership_id: string }> | null }>(
+      "select id, crew from public.booking_series where id = $1",
+      [made.coverSeriesId],
+    );
+    expect((series.crew ?? []).map((m) => m.membership_id).sort()).toEqual(
+      [s.olha.membershipId, s.vira.membershipId].sort(),
+    );
+
+    const visits = await api.sql<{ id: string; at: string; lead: string | null; crew: string[]; cover: unknown[] | null }>(
+      `select b.id, b.scheduled_at::text as at, b.assigned_to as lead, b.cover_needed as cover,
+              coalesce((select array_agg(ba.membership_id order by ba.membership_id) from public.booking_assignees ba where ba.booking_id = b.id), '{}') as crew
+         from public.bookings b where b.series_id = $1 and b.id <> $2 order by b.scheduled_at`,
+      [series.id, source],
+    );
+    expect(visits.length).toBeGreaterThanOrEqual(3);
+    const both = [s.olha.membershipId, s.vira.membershipId].sort();
+    // The visit on Leslie's day has nobody and says who it is waiting for.
+    const clashing = visits.filter((v) => (v.cover ?? []).length > 0);
+    expect(clashing).toHaveLength(1);
+    expect(clashing[0]).toMatchObject({ crew: [], lead: null });
+    expect(clashing[0].cover).toHaveLength(2);
+    // Every other new visit has both of them, not the lead alone.
+    for (const v of visits.filter((x) => x.id !== clashing[0].id)) {
+      expect(v.crew).toEqual(both);
+      expect(v.lead).toBe(s.olha.membershipId);
+    }
+
+    // And the office can still put them on that one, double-booked.
+    const put = await s.press(s.owner, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
+    expect(put, api.log()).toMatchObject({ ok: true, people: 2, visits: 1 });
+    expect((await s.visit(clashing[0].id)).crew).toEqual(both);
+  });
+
+  it("Make recurring with nobody busy answers plainly, and a one-person visit stays one person", async () => {
+    const s = await setUp();
+    const anna = await addMember(api.sql, s.org, "employee", "Anna");
+    const source = await s.amandaVisit(10, [anna], s.day - 14);
+    const f = new FormData();
+    f.set("pattern", "bi_weekly");
+    const made = (await s.press(s.owner, () => bookings.convertBookingToRecurringAction(source, f))) as unknown as {
+      ok: boolean;
+      coverSeriesId?: string;
+    };
+    expect(made, api.log()).toEqual({ ok: true });
+    const crews = await api.sql<{ crew: string[] }>(
+      `select coalesce((select array_agg(ba.membership_id) from public.booking_assignees ba where ba.booking_id = b.id), '{}') as crew
+         from public.bookings b where b.client_id = $1 and b.id <> $2`,
+      [s.amanda, source],
+    );
+    expect(crews.length).toBeGreaterThanOrEqual(3);
+    for (const c of crews) expect(c.crew).toEqual([anna.membershipId]);
+  });
 });

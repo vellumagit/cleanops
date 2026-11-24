@@ -17,6 +17,15 @@ import { DeleteEmployeeForm } from "./delete-employee-form";
 import { ForceDeleteForm } from "./force-delete-form";
 import { RecoveryLinkCard } from "./recovery-link-card";
 import { LastWorkingDayCard } from "./last-working-day-card";
+import {
+  seriesNamingMember,
+  seriesNames,
+  type SeriesNamingMember,
+  type SeriesRow,
+  type UpcomingVisit,
+} from "@/lib/series-naming-member";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { formatDate } from "@/lib/format";
 
 export const metadata = { title: "Edit employee" };
 
@@ -78,6 +87,70 @@ export default async function EditEmployeePage({
   if (!member) notFound();
 
   const isSelf = member.id === viewer.id;
+
+  // The recurring series that still name someone with a last working day:
+  // each goes on making visits without them until it gets a new crew
+  // (series-naming-member.ts). Read only when a date is set. A failed read
+  // shows no list; the card itself still works.
+  let stillOnSeries: Array<SeriesNamingMember & { visitLabel: string | null }> = [];
+  if (member.status === "active" && member.last_working_day) {
+    try {
+      const { data: seriesRows, error: seriesErr } = (await admin
+        .from("booking_series")
+        .select("id, assigned_to, crew, pattern, ends_at, client:clients ( name )" as never)
+        .eq("organization_id", viewer.organization_id)
+        .eq("active", true)
+        .limit(2000)) as unknown as {
+        data: Array<{
+          id: string;
+          assigned_to: string | null;
+          crew: unknown;
+          pattern: string;
+          ends_at: string | null;
+          client: { name: string | null } | null;
+        }> | null;
+        error: { message: string } | null;
+      };
+      if (seriesErr) throw new Error(seriesErr.message);
+      const naming: SeriesRow[] = (seriesRows ?? [])
+        .filter((s) => seriesNames(s, member.id))
+        .map((s) => ({
+          id: s.id,
+          assigned_to: s.assigned_to,
+          crew: s.crew,
+          pattern: s.pattern,
+          ends_at: s.ends_at,
+          client_name: s.client?.name ?? null,
+        }));
+      if (naming.length > 0) {
+        const upcoming: UpcomingVisit[] = [];
+        const ids = naming.map((s) => s.id);
+        for (let i = 0; i < ids.length; i += 100) {
+          const { data: visits, error: visitsErr } = (await admin
+            .from("bookings")
+            .select("id, series_id, scheduled_at")
+            .eq("organization_id", viewer.organization_id)
+            .in("series_id", ids.slice(i, i + 100))
+            .in("status", ["pending", "confirmed"])
+            .gte("scheduled_at", new Date().toISOString())
+            .order("scheduled_at", { ascending: true })
+            .limit(5000)) as unknown as {
+            data: UpcomingVisit[] | null;
+            error: { message: string } | null;
+          };
+          if (visitsErr) throw new Error(visitsErr.message);
+          upcoming.push(...(visits ?? []));
+        }
+        const tz = await getOrgTimezone(viewer.organization_id);
+        stillOnSeries = seriesNamingMember(naming, upcoming, member.id, member.last_working_day, tz).map((s) => ({
+          ...s,
+          visitLabel: s.visitAt ? formatDate(s.visitAt, tz) : null,
+        }));
+      }
+    } catch (err) {
+      console.error("[employees] could not read the series this person is still on:", err);
+    }
+  }
 
   // What deactivating would leave owed — shown BEFORE the owner flips the
   // switch, so the settlement is part of the decision instead of a surprise
@@ -264,6 +337,7 @@ export default async function EditEmployeePage({
             memberId={member.id}
             memberName={currentDisplayName}
             current={member.last_working_day}
+            stillOnSeries={stillOnSeries}
           />
         )}
 

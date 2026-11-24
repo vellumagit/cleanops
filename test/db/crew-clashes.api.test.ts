@@ -389,16 +389,20 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
     expect(row.status).toBe("cancelled");
   });
 
-  it("making a booking recurring when its cleaner is booked on a later date names that date and leaves no series behind", async () => {
+  // Until 2026-11-24 this refused the whole conversion and named the date.
+  // Now it does what a new series does: the series is made, the busy date
+  // comes out without her and says so (book-anyway.api.test.ts has the
+  // crew and "Put them on anyway" side of it).
+  it("making a booking recurring when its cleaner is booked on a later date makes the series and leaves her off that one visit", async () => {
     const c = await company();
     const olha = await addMember(api.sql, c.org, "employee", "Olha");
     await api.sql("update public.memberships set display_name = 'Olha Musnytska' where id = $1", [olha.membershipId]);
     const first = await job(c, "Goes Weekly", at(3), 180, [olha]);
     // Two weeks after the first visit, same hour: the third visit would land on it.
-    await job(c, "In The Way", at(17, 10), 180, [olha]);
+    const inTheWay = await job(c, "In The Way", at(17, 10), 180, [olha]);
 
     request.cookies = api.sessionCookies(c.manager.userId);
-    let result: { ok: boolean; error?: string };
+    let result: { ok: boolean; error?: string; coverSeriesId?: string };
     try {
       const form = new FormData();
       form.set("pattern", "weekly");
@@ -406,13 +410,22 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
     } finally {
       await settle();
     }
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("Olha Musnytska is already booked");
-    expect(result.error).toContain("In The Way");
-    expect(result.error).not.toMatch(/overlapping booking/i);
-    expect(await api.sql("select 1 from public.booking_series where organization_id = $1", [c.org])).toEqual([]);
+    expect(result.ok, `${result.error ?? ""} ${api.log()}`).toBe(true);
+    expect(result.coverSeriesId).toBeTruthy();
     const [row] = await api.sql<{ series_id: string | null }>("select series_id from public.bookings where id = $1", [first]);
-    expect(row.series_id).toBeNull();
+    expect(row.series_id).toBe(result.coverSeriesId);
+
+    const later = await api.sql<{ crew: string[]; cover: Array<{ membership_id: string; other_booking_id: string }> | null }>(
+      `select b.cover_needed as cover,
+              coalesce((select array_agg(ba.membership_id) from public.booking_assignees ba where ba.booking_id = b.id), '{}') as crew
+         from public.bookings b where b.series_id = $1 and b.id <> $2 order by b.scheduled_at`,
+      [result.coverSeriesId, first],
+    );
+    const marked = later.filter((v) => v.cover !== null);
+    expect(marked).toHaveLength(1);
+    expect(marked[0].crew).toEqual([]);
+    expect(marked[0].cover).toEqual([{ membership_id: olha.membershipId, other_booking_id: inTheWay }]);
+    for (const v of later.filter((x) => x.cover === null)) expect(v.crew).toEqual([olha.membershipId]);
   });
 
   it("shared hours: a NEW booking with two people is judged on each one's share too", async () => {

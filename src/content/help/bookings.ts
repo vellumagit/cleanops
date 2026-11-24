@@ -140,6 +140,8 @@ A booking moves **Pending → Confirmed → In progress → Completed**, and can
 
 For a job that has already happened, status only moves forward. A completed job can still be set to **Cancelled** — but not out from under an invoice: if a live invoice bills it, void or fix that invoice first. A cancelled job stays cancelled.
 
+Bringing a cancelled future job back (Cancelled to Confirmed or Pending) puts its crew back on the schedule. If one of them has been given another job at that time since, the change is refused with the job named, and an owner, admin or manager can press **Book anyway** in that message to bring it back with the overlap.
+
 **A job scheduled in the future is different**, because it's a plan rather than a record. Anything more than four hours out can be set freely to **Pending, Confirmed or Cancelled** — including back to Pending after you move it. That's the one to reach for when you reschedule and the client hasn't agreed to the new time yet: the "your job is tomorrow" reminder only goes out for **Confirmed** jobs. Future jobs aren't offered *Completed* or *In progress* at all.
 
 ## Cancelling a job

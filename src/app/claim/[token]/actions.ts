@@ -6,6 +6,7 @@ import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { formatDateTime, humanizeEnum } from "@/lib/format";
 import { planOfferSwap, type CrewRow } from "@/lib/offer-swap";
 import { syncJob } from "@/lib/job-sync";
+import { markCrewSetByHand } from "@/lib/hand-set-marks";
 import { findCrewClashes } from "@/lib/crew-clashes";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -375,6 +376,11 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
           // length when hours are divided. Recompute like every other crew
           // change does.
           await syncJob(bookingRow.id, "crew_changed");
+          // Someone took this one visit, or covered for someone on it: on a
+          // series visit that is a crew of its own, which a later "this and
+          // all future" save asks about before overriding (only a visit
+          // that belongs to a series is marked).
+          await markCrewSetByHand(bookingRow.organization_id, bookingRow.id);
         }
       }
     } catch (assignErr) {

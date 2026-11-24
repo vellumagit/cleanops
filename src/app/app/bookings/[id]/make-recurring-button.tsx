@@ -35,7 +35,13 @@ export function MakeRecurringButton({ bookingId }: { bookingId: string }) {
     fd.append("pattern", pattern);
     startTransition(async () => {
       const res = await convertBookingToRecurringAction(bookingId, fd);
-      if (res.ok) {
+      if (res.ok && res.coverSeriesId) {
+        // Someone on the crew has another job on some of the new dates. The
+        // bookings list says who and which, with "Put them on anyway".
+        toast.success("Recurring series created. Some visits need cover.");
+        setOpen(false);
+        router.push(`/app/bookings?cover=${res.coverSeriesId}`);
+      } else if (res.ok) {
         toast.success("Recurring series created");
         setOpen(false);
         router.refresh();
@@ -63,7 +69,10 @@ export function MakeRecurringButton({ bookingId }: { bookingId: string }) {
           <DialogTitle>Make this booking recurring</DialogTitle>
           <DialogDescription>
             This visit stays as the first one. We&rsquo;ll schedule future
-            visits on the same weekday and time at the frequency you pick.
+            visits on the same weekday and time at the frequency you pick,
+            with the same crew. If someone has another job on one of the
+            dates, they are left off that visit and it is marked &ldquo;Needs
+            cover&rdquo;.
           </DialogDescription>
         </DialogHeader>
 

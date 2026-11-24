@@ -140,6 +140,9 @@ export async function clashesOnVisit(
   admin: SupabaseClient,
   organizationId: string,
   bookingId: string,
+  /** asIfLive: the visit is cancelled and about to be brought back, so the
+   *  question is who would be double-booked once it is live again. */
+  opts: { asIfLive?: boolean } = {},
 ): Promise<CrewClash[]> {
   const { data: b, error } = (await admin
     .from("bookings")
@@ -158,7 +161,8 @@ export async function clashesOnVisit(
     error: { message: string } | null;
   };
   if (error) throw new Error(error.message);
-  if (!b || b.status === "cancelled" || b.status === "completed") return [];
+  if (!b || b.status === "completed") return [];
+  if (b.status === "cancelled" && !opts.asIfLive) return [];
   const { data: rows, error: rowsErr } = (await admin
     .from("booking_assignees")
     .select("membership_id, split_start_offset_minutes, split_duration_minutes")

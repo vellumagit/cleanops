@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { setBookingStatusAction, setSeriesStatusAction } from "./actions";
+import { showRefusedDrop } from "../scheduling/refused-drop";
 import {
   rendersAsStaticBadge,
   statusDropdownOptions,
@@ -58,14 +59,21 @@ export function BookingStatusDropdown({
     );
   }
 
-  function applyToThisOnly(target: string) {
+  /** `confirmOverlap`: the Book anyway press, for a cancelled visit whose
+   *  crew has another job at that time now. */
+  function applyToThisOnly(target: string, confirmOverlap?: string) {
     startTransition(async () => {
       const fd = new FormData();
       fd.set("id", bookingId);
       fd.set("status", target);
+      if (confirmOverlap) fd.set("confirm_overlap", confirmOverlap);
       const res = await setBookingStatusAction(fd);
-      if (!res.ok) toast.error(res.error ?? "Couldn't update status.");
-      else toast.success("Status updated.");
+      if (!res.ok) {
+        showRefusedDrop(
+          { error: res.error ?? "Couldn't update status.", bookAnyway: res.bookAnyway },
+          (key) => applyToThisOnly(target, key),
+        );
+      } else toast.success("Status updated.");
       setAskScopeFor(null);
       router.refresh();
     });

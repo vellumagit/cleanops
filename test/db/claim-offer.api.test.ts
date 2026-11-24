@@ -91,6 +91,34 @@ describe.skipIf(!hasPostgrest)("claiming an offered shift", () => {
     expect(crew.map((c) => c.membership_id)).toEqual([vira.membershipId]);
     const [o] = await api.sql<{ status: string }>("select status from public.job_offers where id = $1", [offer]);
     expect(o.status).toBe("filled");
+    // A one-off visit is never marked: there is no series to save over it.
+    const [mark] = await api.sql<{ crew_set_by_hand_at: string | null }>(
+      "select crew_set_by_hand_at from public.bookings where id = $1",
+      [job],
+    );
+    expect(mark.crew_set_by_hand_at).toBeNull();
+  });
+
+  it("a claimed visit of a series is marked as having its own crew, so a series save asks before overriding it", async () => {
+    const org = await addOrg(api.sql, "Series Claim Co");
+    const owner = await addMember(api.sql, org, "owner", "Owner");
+    const vira = await addMember(api.sql, org, "employee", "Vira");
+    const client = await clientNamed(org, "Weekly Client");
+    const [series] = await api.sql<{ id: string }>(
+      `insert into public.booking_series (organization_id, client_id, pattern, start_time, starts_at, duration_minutes)
+       values ($1, $2, 'weekly', '16:00', current_date, 180) returning id`,
+      [org, client],
+    );
+    const job = await addBooking(api.sql, org, client, { scheduledAt: at(5, 16), durationMinutes: 180 });
+    await api.sql("update public.bookings set series_id = $2 where id = $1", [job, series.id]);
+    const { token } = await offerTo(org, job, owner, vira);
+
+    expect(await claim.claimOfferAction(token)).toMatchObject({ ok: true });
+    const [mark] = await api.sql<{ crew_set_by_hand_at: string | null }>(
+      "select crew_set_by_hand_at from public.bookings where id = $1",
+      [job],
+    );
+    expect(mark.crew_set_by_hand_at).not.toBeNull();
   });
 
   it("a cleaner already booked then is told which job, and the spot stays open", async () => {

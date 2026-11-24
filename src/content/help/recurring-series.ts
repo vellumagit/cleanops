@@ -33,7 +33,7 @@ The frequencies:
 
 The rest of the form is the same as a one-time booking: client, duration, service, crew, and **Total**, which here is *per visit*. Two differences: there's no status (every visit is created Confirmed), and no per-person arrival times. Press **Create recurring booking**.
 
-**Already booked a one-off?** Use **Make recurring** on its booking page, or **Make this recurring** on its edit page. Pick a frequency — Weekly, Every 2 weeks, Every 3 weeks, Every 4 weeks, or Monthly (same date) — and **Create series**. That visit stays as the first; the rest land on the same weekday and time.
+**Already booked a one-off?** Use **Make recurring** on its booking page, or **Make this recurring** on its edit page. Pick a frequency — Weekly, Every 2 weeks, Every 3 weeks, Every 4 weeks, or Monthly (same date) — and **Create series**. That visit stays as the first; the rest land on the same weekday and time, with everyone who is on that visit. If someone has another job on one of the new dates, the series is still made: they are left off that visit, it is marked **Needs cover**, and you land on Bookings with the banner that says who and which dates.
 
 ## How far ahead visits appear
 
@@ -60,11 +60,11 @@ Right after the save, a banner on the bookings list (or, from **Change crew**, a
 
 **Want them on those visits anyway?** An owner, admin or manager sees a **Put them on anyway** button in that banner, in the pop-up's message, and on each marked visit's page. It puts the person on the visits they were left off for another job, overlap and all, clears the mark and tells them. Those visits and the jobs they overlap then show **Double-booked** until you move one. Use it when you'd rather keep your cleaner on the series and move the clashing visits yourself. Someone past their last working day is not put back.
 
-This applies to a new series, an edit with **This and all future bookings** (including one that moves the series to another day, time or frequency), and **Change crew** with **This and all future bookings**. **Make recurring** still refuses on a clash and names the dates, and so does moving a series whose crew is on their own split times. A one-off booking with a clash is refused, and an owner or admin can then press **Book anyway**.
+This applies to a new series, an edit with **This and all future bookings** (including one that moves the series to another day, time or frequency), and **Change crew** with **This and all future bookings**. It applies to **Make recurring** too. Moving a series whose crew is on their own split times still refuses on a clash and names the dates. A one-off booking with a clash is refused, and an owner, admin or manager can then press **Book anyway**.
 
 ## Visits you changed by hand
 
-A visit you moved on its own (dragged on the board, or re-timed with **Just this booking**), or gave its own cleaner for one week, is remembered as changed by hand. A later save with **This and all future bookings** no longer puts it back in line with the series without a word:
+A visit you moved on its own (dragged on the board, or re-timed with **Just this booking**), or gave its own cleaner for one week, is remembered as changed by hand. So is a visit a cleaner took from an offered shift, or covered for someone on. A later save with **This and all future bookings** no longer puts it back in line with the series without a word:
 
 - **The save isn't about what you changed.** Change the price or the notes for the series, and a visit with its own cleaner keeps that cleaner. Nothing is asked.
 - **The save would override it.** Give the series a new cleaner, or move it to another day or time, and the save stops first and lists those visits: *"One later visit was changed by hand: Fri, Jan 15 (moved by hand)…"* Nothing has been saved yet. Press **Keep them as they are** and every other later visit takes the change while those stay as you set them; press **Change them too** and they follow the series like the rest.

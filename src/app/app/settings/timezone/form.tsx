@@ -23,7 +23,11 @@ export function TimezoneForm({
     <form action={formAction} className="max-w-xl space-y-4">
       <div>
         <Label htmlFor="timezone">Timezone</Label>
+        {/* Keyed on the saved value: React puts a form back to its first
+            defaults after a save, which showed the old timezone until the
+            page was reloaded. A fresh select starts from the new one. */}
         <select
+          key={currentTz}
           id="timezone"
           name="timezone"
           defaultValue={currentTz}
