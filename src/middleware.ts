@@ -12,12 +12,14 @@
  *    save one. The root proxy.ts was written to do this but sat where
  *    Next never looked (the app is under src/), so it never ran.
  *
- * 2. Copies the request pathname into an `x-pathname` header so server
- *    components and the auth helpers can read it. Next 16 RSCs can't
- *    directly access the current URL, but they can read request headers.
- *    Used by `enforceMfa()` in src/lib/auth.ts so an aal1-stuck user
- *    trying to reach /app/bookings/abc lands back on that URL after
- *    clearing MFA — not on a generic /app dashboard.
+ * 2. Under /app and /field only, copies the request pathname into an
+ *    `x-pathname` header so server components and the auth helpers can
+ *    read it. Next 16 RSCs can't directly access the current URL, but they
+ *    can read request headers. Used by `enforceMfa()` in src/lib/auth.ts so
+ *    an aal1-stuck user trying to reach /app/bookings/abc lands back on
+ *    that URL after clearing MFA — not on a generic /app dashboard. That
+ *    gate treats the header's absence as "not a gated page render", so it
+ *    must stay limited to the two trees the gate protects.
  *
  * The refresh decides nothing. It never redirects and never reads who the
  * person is: the layouts' requireMembership() still does all of that, with
@@ -36,13 +38,13 @@
  * value matches /app or /field before using it as a redirect target, so a
  * spoofed header in some forwarded scenario can't become an open redirect.
  *
- * Scope: /app and /field ONLY — the two trees behind requireMembership().
+ * Scope: /app and /field (the office and the cleaners, behind
+ * requireMembership()) and /client (the client portal, behind
+ * requireClient()) — the three trees where a signed-in person browses.
  * Everything else — the marketing pages, /login, the public token routes,
  * /api/* with its own auth — would be run through an edge function for
  * nothing. Each excluded path is one less edge invocation billed and one
  * less mutation standing between the request and a cacheable response.
- * (The client portal, /client, has the same expired-token pattern and is
- * not covered here yet.)
  *
  * Kept as `middleware` on the Edge runtime on purpose: renaming it to
  * `proxy` moves it to Node.js, which Next's upgrade guide says not to do
@@ -94,9 +96,12 @@ export async function middleware(request: NextRequest) {
 
   // Mirror the pathname onto REQUEST headers so RSCs reading via
   // next/headers see it. NextResponse.next({ request: { headers } })
-  // is the mechanism Next exposes for this.
+  // is the mechanism Next exposes for this. Never under /client: the
+  // MFA gate reads any value it finds as a gated page render.
+  const { pathname } = request.nextUrl;
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-pathname", request.nextUrl.pathname);
+  if (MFA_GATED.test(pathname)) requestHeaders.set("x-pathname", pathname);
+  else requestHeaders.delete("x-pathname");
   const response = NextResponse.next({
     request: { headers: requestHeaders },
   });
@@ -109,10 +114,12 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+/** The trees requireMembership()'s MFA gate protects: /app and /field. */
+const MFA_GATED = /^\/(app|field)(\/|$)/;
+
 export const config = {
-  // The header exists for the MFA gate, and the MFA gate only runs inside
-  // requireMembership() — /app and /field. A positive matcher states that
-  // directly, instead of a negative one that has to be kept in step with
-  // every new asset extension and public route the app grows.
-  matcher: ["/app/:path*", "/field/:path*"],
+  // A positive matcher states the scope directly, instead of a negative one
+  // that has to be kept in step with every new asset extension and public
+  // route the app grows. Must be literal: Next reads it at build time.
+  matcher: ["/app/:path*", "/field/:path*", "/client/:path*"],
 };
