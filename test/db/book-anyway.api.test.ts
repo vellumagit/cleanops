@@ -3,14 +3,15 @@
  *
  * Svitlana, 2026-11-23: she wanted to put Olha and Vira on a visit that
  * overlapped a job they were already on and move one of them later. Every
- * save was refused, so the visit could not go down at all. Now an owner or
- * admin is refused once, with the names, and a Book anyway press keeps the
- * overlap.
+ * save was refused, so the visit could not go down at all. Now the office
+ * (an owner, admin or manager) is refused once, with the names, and a Book
+ * anyway press keeps the overlap.
  *
  * The real actions against the real stack (test/db/api.ts): the refusal
  * carries a key and saves nothing; the press saves, writes an audit entry,
  * and the visit's page can name the overlap; a changed save asks again; a
- * manager is refused as before; and a last working day is still a hard stop.
+ * manager gets it as an owner does (widened 2026-11-23), a cleaner never;
+ * and a last working day is still a hard stop.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hasPostgrest, startApi, type Api } from "./api";
@@ -260,20 +261,20 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
     expect((await s.amandaVisits()).length).toBe(1);
   });
 
-  it("a manager is refused as before, with no Book anyway", async () => {
+  // It was owners and admins only for a day. The people running the
+  // schedule are often managers, so they get it too.
+  it("a manager gets Book anyway as an owner does", async () => {
     const s = await setUp();
     const first = asked(await s.press(s.manager, () => bookings.createBookingAction({}, s.formFor([s.olha]))));
-    expect(first.errors?._form).toMatch(/move that job first\.$/);
-    expect(first.errors?._form).not.toContain("Book anyway");
-    expect(first.values?.confirm_overlap).toBeUndefined();
+    expect(first.errors?._form, api.log()).toContain("press Book anyway");
+    expect(first.values?.confirm_overlap).toBe(`${s.olha.membershipId}:${s.busy}`);
+    expect(await s.amandaVisits(), "nothing saved yet").toEqual([]);
 
-    // A key typed in by hand changes nothing.
-    const forged = `${s.olha.membershipId}:${s.busy}`;
-    const again = asked(
-      await s.press(s.manager, () => bookings.createBookingAction({}, s.formFor([s.olha], { confirm_overlap: forged }))),
+    const saved = await s.press(s.manager, () =>
+      bookings.createBookingAction({}, s.formFor([s.olha], { confirm_overlap: first.values!.confirm_overlap })),
     );
-    expect(again.errors?._form).toMatch(/already booked then/);
-    expect(await s.amandaVisits()).toEqual([]);
+    expect(saved, api.log()).toMatchObject({ redirected: expect.any(String) });
+    expect((await s.amandaVisits())[0].crew).toEqual([s.olha.membershipId]);
   });
 
   it("a last working day is not waived", async () => {
@@ -354,7 +355,7 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
   });
 
   // Where a "Needs cover" visit sends the office to pick someone.
-  it("the Change crew pop-up: refused with a key, saved with it; a manager gets neither", async () => {
+  it("the Change crew pop-up: refused with a key, saved with it, for a manager as for an owner", async () => {
     const s = await setUp();
     const id = await s.amandaVisit(10);
     const assign = (as: Member, extra: Record<string, string> = {}) => {
@@ -370,20 +371,21 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
     };
 
     const asManager = await assign(s.manager);
-    expect(asManager.error).toMatch(/already booked then/);
-    expect(asManager.error).not.toContain("Book anyway");
-    expect(asManager.confirmOverlap).toBeUndefined();
+    expect(asManager.error, api.log()).toContain("press Book anyway");
+    expect(asManager.confirmOverlap).toBe(`${s.olha.membershipId}:${s.busy}`);
+    expect((await s.visit(id)).crew).toEqual([]);
 
     const refused = await assign(s.owner);
     expect(refused.error, api.log()).toContain("press Book anyway");
     expect(refused.confirmOverlap).toBe(`${s.olha.membershipId}:${s.busy}`);
     expect((await s.visit(id)).crew).toEqual([]);
 
-    const forged = await assign(s.manager, { confirm_overlap: refused.confirmOverlap! });
-    expect(forged.error).toMatch(/already booked then/);
+    // A cleaner cannot assign crew at all, key or no key.
+    const cleaner = await assign(s.vira, { confirm_overlap: refused.confirmOverlap! });
+    expect(cleaner.error).toMatch(/Only owners, admins, or managers/);
     expect((await s.visit(id)).crew).toEqual([]);
 
-    const saved = await assign(s.owner, { confirm_overlap: refused.confirmOverlap! });
+    const saved = await assign(s.manager, { confirm_overlap: refused.confirmOverlap! });
     expect(saved, api.log()).toMatchObject({ ok: true });
     expect(await s.visit(id)).toMatchObject({ lead: s.olha.membershipId, crew: [s.olha.membershipId] });
   });
@@ -421,11 +423,12 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
     expect(await s.visit(visits[0])).toMatchObject({ crew: [], lead: null });
     expect(await s.visit(visits[1])).toMatchObject({ crew: [s.olha.membershipId] });
 
-    const asManager = await s.press(s.manager, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
-    expect(asManager).toMatchObject({ ok: false });
+    // Not a cleaner's to press, even for herself.
+    const asCleaner = await s.press(s.olha, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
+    expect(asCleaner).toMatchObject({ ok: false });
     expect((await s.visit(visits[0])).crew).toEqual([]);
 
-    const put = await s.press(s.owner, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
+    const put = await s.press(s.manager, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
     expect(put, api.log()).toMatchObject({ ok: true, people: 1, visits: 1 });
     expect(await s.visit(visits[0])).toMatchObject({ crew: [s.olha.membershipId], lead: s.olha.membershipId, cover: null });
 

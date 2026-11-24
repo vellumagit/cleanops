@@ -170,7 +170,7 @@ export default async function BookingsPage({
     const needsCover = new Map<string, string>();
     let coverBanner: string | null = null;
     // Was anyone left off for another job (not a last working day)? Then
-    // an owner or admin may put them on anyway.
+    // the office may put them on anyway.
     let coverPutOn = false;
     try {
       const fromIso = new Date().toISOString();
@@ -513,7 +513,7 @@ export default async function BookingsPage({
           className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
         >
           <span className="font-semibold">Series saved.</span> {coverBanner}
-          {coverPutOn && cover && (membership.role === "owner" || membership.role === "admin") && (
+          {coverPutOn && cover && canEdit && (
             <span className="mt-2 flex flex-wrap items-center gap-2">
               <PutOnAnywayButton seriesId={cover} />
               <span className="text-xs">

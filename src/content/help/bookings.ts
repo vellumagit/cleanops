@@ -43,7 +43,7 @@ The save button reads **Create booking** (or **Create recurring booking**).
 
 Once a date, time and length are in, the **Crew** field only lists the people who are free, and tucks the rest under **Show N who aren't free then**, each with the reason: *Off that day* (approved time off or a day marked unavailable), another job at that time, or outside the hours they said they work. You can still pick someone from that list — their name turns amber with the reason — and the save's own check has the final word. If the check can't run, the form lists everyone and says so. A pale warning triangle beside a name means that person has an accommodation note on file; check their employee file before assigning.
 
-A person on approved time off makes the save stop and ask whether to book them anyway. Someone already booked on another job at that time is refused, with the clashing job named. An owner or admin then sees a **Book anyway** button: press it to save the visit with the overlap and sort it out later. The same button is in the **Change crew** pop-up, and in the message when a drag on the scheduling board is refused. Both jobs show as *Double-booked* on the bookings list, the scheduling board and the visit's own page until one of them moves, and the press is kept in the audit log. A changed save (another time, someone else added) asks again. **Book anyway** never overrides a cleaner's last working day, and managers get the plain refusal.
+A person on approved time off makes the save stop and ask whether to book them anyway. Someone already booked on another job at that time is refused, with the clashing job named. An owner, admin or manager then sees a **Book anyway** button: press it to save the visit with the overlap and sort it out later. The same button is in the **Change crew** pop-up, and in the message when a drag on the scheduling board is refused. Both jobs show as *Double-booked* on the bookings list, the scheduling board and the visit's own page until one of them moves, and the press is kept in the audit log. A changed save (another time, someone else added) asks again. **Book anyway** never overrides a cleaner's last working day.
 
 ## Price, hours and crew size
 
@@ -179,7 +179,7 @@ Deleting sends no message to the crew or the client. If the client or crew shoul
 
 **I deleted a booking by mistake. Can I get it back?** No — deleting can't be undone. Hours logged on it are still in Timesheets and can be re-attached. Next time, cancel instead: a cancelled booking stays on record.
 
-**Why does a booking say "Needs cover"?** Someone was left off that visit when a recurring series' crew was saved, because they had another job then. Open the visit and pick someone else, or, as an owner or admin, press **Put them on anyway** on the visit's page to keep them on it double-booked; see [Recurring series](help:recurring-series).
+**Why does a booking say "Needs cover"?** Someone was left off that visit when a recurring series' crew was saved, because they had another job then. Open the visit and pick someone else, or press **Put them on anyway** on the visit's page to keep them on it double-booked; see [Recurring series](help:recurring-series).
 
 **Can a manager use the buttons on the booking page?** Managers can create and edit bookings and change status from the list, but the buttons along the top of a booking's page are for owners and admins.
 `,

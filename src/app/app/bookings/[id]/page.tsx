@@ -107,8 +107,9 @@ export default async function BookingDetailPage({
   // crew is on another job at the same time. Read beside the cover mark, on
   // its own, so the page never depends on it.
   let needsCover: string | null = null;
-  // Left off for another job (not a last working day): the names an owner
-  // or admin may put on anyway.
+  // Left off for another job (not a last working day): the names the
+  // office may put on anyway. Managers too, though the buttons along the top
+  // of this page are for owners and admins: Book anyway is theirs everywhere.
   let coverPutOn: string[] = [];
   let doubleBooked: string | null = null;
   await Promise.all([
@@ -586,7 +587,7 @@ export default async function BookingDetailPage({
                 <span className="font-semibold">Needs cover.</span> {leftOffSentence(needsCover)} Use{" "}
                 {booking.assigned ? "Change crew" : "Assign crew"} to
                 pick someone else; this note goes once the crew is saved.
-                {canEdit && coverPutOn.length > 0 && (
+                {(canEdit || membership.role === "manager") && coverPutOn.length > 0 && (
                   <span className="mt-2 flex flex-wrap items-center gap-2">
                     <PutOnAnywayButton
                       bookingIds={[booking.id]}

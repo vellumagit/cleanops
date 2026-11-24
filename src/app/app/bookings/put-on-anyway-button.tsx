@@ -10,7 +10,7 @@ import { putLeftOffCrewOnAction } from "./actions";
  * "Put them on anyway", beside a note that someone was left off a visit
  * (or several, after a series save) because they had another job then.
  * One press puts them on those visits, double-booked, so the office can
- * move each visit itself. Shown to owners and admins only, and only where
+ * move each visit itself. Shown to owners, admins and managers, and only where
  * someone was left off for another job; the action checks both again.
  */
 export function PutOnAnywayButton({

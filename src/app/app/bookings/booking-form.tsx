@@ -600,7 +600,7 @@ export function BookingForm({
 
   // ── Book anyway ──────────────────────────────────────────────────────
   // A save refused because someone on the crew is already on another job
-  // then comes back, for an owner or admin, with a key naming those
+  // then comes back, for an owner, admin or manager, with a key naming those
   // clashes. "Book anyway" posts it; a plain Save does not, so keeping an
   // overlap is always a press of its own (actions.ts, approvedClashes).
   const overlapKey = (state.values as { confirm_overlap?: string } | undefined)?.confirm_overlap ?? "";

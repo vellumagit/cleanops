@@ -86,7 +86,7 @@ Connect Google Calendar under [Settings → Integrations](/app/settings/integrat
 
 **What's the difference between Scheduling and Calendar?** Scheduling is per cleaner and lets you drag jobs between people and times. Calendar is a straight calendar of bookings, invoice due dates, tasks and Google events, with no per-cleaner lanes and no dragging.
 
-**Why can't I drag jobs on the scheduler?** Dragging, and booking from an empty slot, are for owners and admins. Managers can open jobs, change status and use the quick view's buttons.
+**Why can't I drag jobs on the scheduler?** Dragging, and booking from an empty slot, are for owners and admins (so the board's **Book anyway** is too; a manager gets it on the booking form and in **Change crew**). Managers can open jobs, change status and use the quick view's buttons.
 
 **I dragged a job and the client got a message — can I stop that?** A drag sends the rescheduled notice if those automations are on and the client's preferences allow it. To move a job quietly, open it and change the time in the edit form, then choose **Save without notifying**.
 

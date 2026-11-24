@@ -92,7 +92,7 @@ export function clashMessage(
   opts: {
     tz: string;
     visitCount: number;
-    /** An owner or admin saving one visit: they may keep the overlap and
+    /** The office saving one visit: they may keep the overlap and
      *  sort it out later ("Book anyway", migration 20261124020000). */
     canBookAnyway?: boolean;
   },

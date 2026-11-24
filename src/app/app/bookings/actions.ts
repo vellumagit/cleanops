@@ -336,7 +336,7 @@ async function overlapExplanation(
 }
 
 /**
- * "Book anyway" (migration 20261124020000). An owner or admin saving one
+ * "Book anyway" (migration 20261124020000). An owner, admin or manager saving one
  * visit whose crew is already on another job then may keep the overlap and
  * sort it out later, as Svitlana asked on 2026-11-23. The first save is
  * refused as before, naming who and which job, with a key for exactly
@@ -344,7 +344,7 @@ async function overlapExplanation(
  * `confirm_overlap`, and the save goes through only while the clashes are
  * still the ones they saw.
  *
- * Managers keep the plain refusal: this is the company's own rule to bend.
+ * Cleaners never see it: they cannot edit a booking at all.
  * Saves over many visits ("this and all future") never offer it: those
  * leave a busy cleaner off a visit and mark it as needing cover instead.
  */
@@ -357,7 +357,10 @@ type ClashHandling = {
   found?: CrewClash[];
 };
 
-const mayBookAnyway = (role: string) => role === "owner" || role === "admin";
+// Everyone who may edit a booking. It was owners and admins only for a day;
+// Brian widened it on 2026-11-23: the people running the schedule are the
+// ones who need to put a visit down and sort the other job out after.
+const mayBookAnyway = (role: string) => role === "owner" || role === "admin" || role === "manager";
 
 /**
  * Has this save come back with a Book anyway press that still matches?
@@ -4379,7 +4382,7 @@ export type AssignCrewState = {
   /** With the notice: the visits where someone was left off for another
    *  job and may be put on anyway (putLeftOffCrewOnAction). */
   noticeBookingIds?: string[];
-  /** Set with a double-booking refusal an owner or admin may keep; posted
+  /** Set with a double-booking refusal the office may keep; posted
    *  back by the Book anyway button as `confirm_overlap`. */
   confirmOverlap?: string;
 };
@@ -4579,7 +4582,7 @@ export async function assignBookingCrewAction(
       }
     }
   } else {
-    // One visit: an owner or admin may keep a double-booking, as on the
+    // One visit: the office may keep a double-booking, as on the
     // booking form (Book anyway). This pop-up is where a "Needs cover"
     // visit sends them, and it refused the very person they wanted.
     const kept = await approvedClashes(
@@ -4746,7 +4749,7 @@ function putOnCandidates(visits: CoverVisit[]): string[] {
  * can just move it locally"). This puts them back: on those visits, double-
  * booked, the mark cleared, each person told (migration 20261124030000).
  *
- * Owners and admins, as every Book anyway. Someone past their last working
+ * Owners, admins and managers, as every Book anyway. Someone past their last working
  * day, or no longer active, stays off and stays marked.
  */
 export async function putLeftOffCrewOnAction(input: {
@@ -4755,7 +4758,7 @@ export async function putLeftOffCrewOnAction(input: {
 }): Promise<{ ok: true; people: number; visits: number } | { ok: false; error: string }> {
   const { membership } = await getActionContext();
   if (!mayBookAnyway(membership.role)) {
-    return { ok: false, error: "Only owners and admins can book someone over another job." };
+    return { ok: false, error: "Only owners, admins and managers can book someone over another job." };
   }
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const seriesId = input.seriesId && uuid.test(input.seriesId) ? input.seriesId : null;

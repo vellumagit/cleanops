@@ -213,7 +213,7 @@ export function AssignCrewDialog({
 
           <input type="hidden" name="confirm_time_off" value={state.confirmTimeOff ?? ""} />
           <FormError message={state.error} />
-          {/* A double-booking an owner or admin may keep. The button posts
+          {/* A double-booking the office may keep. The button posts
               the key itself, so a plain Save never keeps an overlap. */}
           {state.confirmOverlap && (
             <div className="flex flex-wrap items-center gap-2">
