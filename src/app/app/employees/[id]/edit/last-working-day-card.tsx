@@ -7,12 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { setLastWorkingDayAction } from "../../actions";
 
-/** "Friday, December 18" for a YYYY-MM-DD date. */
+/** "Friday, December 18, 2026" for a YYYY-MM-DD date. With the year: a
+ *  last day is often months out, and "Sunday, December 31" does not say
+ *  which December. */
 function longDay(ymd: string): string {
   return new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
+    year: "numeric",
     timeZone: "UTC",
   });
 }

@@ -49,17 +49,7 @@ function joinNames(names: string[]): string {
  * Selecting 2+ cleaners shows a confirmation so a team can't be mistaken for
  * a split.
  */
-export function AssignCrewDialog({
-  bookingId,
-  employees,
-  initialPrimaryId,
-  initialAdditionalIds,
-  seriesId,
-  seriesScheduledAt,
-  clientName,
-  open,
-  onOpenChange,
-}: {
+type AssignCrewDialogProps = {
   bookingId: string;
   employees: AssignableEmployee[];
   initialPrimaryId: string | null;
@@ -70,7 +60,40 @@ export function AssignCrewDialog({
   clientName?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}) {
+};
+
+/**
+ * A fresh pop-up every time it opens.
+ *
+ * The save's last answer lives in the pop-up (useActionState), and closing
+ * it did not clear it. So after a series save that said "Saved, but Jordan
+ * was left off Jan 2", opening Change crew again showed that same message
+ * and a Done button instead of the crew list, and a refused save came back
+ * with its old refusal already on screen. Nothing short of reloading the
+ * page got the list back (found on the live site, 2026-11-23). The body is
+ * remounted on each open, which starts the action's state from empty.
+ */
+export function AssignCrewDialog(props: AssignCrewDialogProps) {
+  const [opened, setOpened] = useState(0);
+  const [wasOpen, setWasOpen] = useState(props.open);
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open);
+    if (props.open) setOpened((n) => n + 1);
+  }
+  return <AssignCrewDialogBody key={opened} {...props} />;
+}
+
+function AssignCrewDialogBody({
+  bookingId,
+  employees,
+  initialPrimaryId,
+  initialAdditionalIds,
+  seriesId,
+  seriesScheduledAt,
+  clientName,
+  open,
+  onOpenChange,
+}: AssignCrewDialogProps) {
   const [state, action] = useActionState<AssignCrewState, FormData>(
     assignBookingCrewAction,
     EMPTY,
