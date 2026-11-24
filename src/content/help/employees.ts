@@ -6,7 +6,7 @@ export const article: HelpArticle = {
   blurb: "Adding people with or without a login, employee vs subcontractor, pay rates, the employee file, and what happens when someone leaves.",
   section: "Your team",
   paths: ["/app/employees", "/app/employees/[id]", "/app/employees/[id]/edit", "/app/settings/members"],
-  keywords: ["cleaner", "staff", "crew", "worker", "team", "invite", "add employee", "wage", "pay rate", "fire", "terminate", "deactivate", "offboard", "rehire", "subcontractor", "contractor", "login", "password reset"],
+  keywords: ["cleaner", "staff", "crew", "worker", "team", "invite", "add employee", "wage", "pay rate", "fire", "terminate", "deactivate", "offboard", "rehire", "subcontractor", "contractor", "login", "password reset", "last day", "last working day", "notice", "leaving", "quitting"],
   body: `
 **Employees** is your roster: everyone who works for you, from cleaners to office staff. Each person has a role (what they can open), an engagement (how they're paid), and an hourly pay rate. Owners and admins manage it; it sits under **People** in the sidebar.
 
@@ -94,6 +94,17 @@ Lowering a rate needs one more tick, **Yes, lower the rate from … to …**, so
 ## When someone can't sign in
 
 On the edit page of anyone with a login, **Generate recovery link** creates a one-time password reset link you send them yourself, by text or in person. Use it when the reset email isn't arriving. Anyone holding the link can set a new password on that account, so send it only somewhere they alone can read. Only an owner can create one for another owner.
+
+### Before they go: last working day
+
+When someone has given notice, open their edit page and set **Last working day**. They stay active and keep every visit up to that date. After it:
+
+- Nobody can put them on a visit. A save that tries says so, with their name and the date.
+- Putting them on a recurring series with **This and all future** puts them on the visits up to that date and leaves them off the rest.
+- Any visit they were already on after that date loses them the moment you save the date, and is marked **Needs cover** on Bookings so you can pick someone else.
+- The crew picker shows them as unavailable for those dates, and your online booking page stops offering their times.
+
+Their profile shows a **Last day** tag. **Clear** removes the date; the visits they came off stay as they are. Once they've gone, disable them as below.
 
 ## When someone leaves
 

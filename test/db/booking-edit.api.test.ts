@@ -189,6 +189,50 @@ describe.skipIf(!hasPostgrest)("the booking edit form on a weekly series", () =>
     expect(series.total).toBe(17500);
   });
 
+  it("this and all future, changed to Pending: every later visit reads Pending, the earlier one keeps Confirmed", async () => {
+    // Svitlana, 2026-11-23: confirming a series months ahead, she marks the
+    // first unconfirmed visit Pending with "this and all future", and only
+    // that one visit changed.
+    const s = await weeklySeries();
+    const res = await save(s.owner, s.visits[1], editForm(s, 1, { status: "pending", update_scope: "this_and_future" }));
+    expect(res, api.log()).toMatch(/^redirected to /);
+    const rows = await api.sql<{ id: string; status: string }>(
+      "select id, status from public.bookings where series_id = $1 order by scheduled_at",
+      [s.series],
+    );
+    expect(rows.map((r) => r.id), "same visits, none rebuilt").toEqual(s.visits);
+    expect(rows.map((r) => r.status)).toEqual(["confirmed", "pending", "pending", "pending"]);
+  });
+
+  it("this and all future without touching the status: later Pending visits stay Pending", async () => {
+    const s = await weeklySeries();
+    await api.sql("update public.bookings set status = 'pending' where id = any($1::uuid[])", [[s.visits[2], s.visits[3]]]);
+    const res = await save(s.owner, s.visits[1], editForm(s, 1, { notes: "Side door", update_scope: "this_and_future" }));
+    expect(res, api.log()).toMatch(/^redirected to /);
+    const rows = await api.sql<{ status: string }>(
+      "select status from public.bookings where series_id = $1 order by scheduled_at",
+      [s.series],
+    );
+    expect(rows.map((r) => r.status)).toEqual(["confirmed", "confirmed", "pending", "pending"]);
+  });
+
+  it("this and all future, changed to Pending and moved to Wednesday: the rebuilt visits are Pending", async () => {
+    const s = await weeklySeries();
+    const wednesday = ymd(s.base + 7 * DAY - DAY);
+    const res = await save(
+      s.owner,
+      s.visits[1],
+      editForm(s, 1, { status: "pending", scheduled_at: `${wednesday}T09:00`, update_scope: "this_and_future", ...sameSchedule(s, 1) }),
+    );
+    expect(res, api.log()).toMatch(/^redirected to /);
+    const rows = await api.sql<{ id: string; status: string }>(
+      "select id, status from public.bookings where series_id = $1 and status <> 'cancelled' order by scheduled_at",
+      [s.series],
+    );
+    expect(rows[0]).toMatchObject({ id: s.visits[0], status: "confirmed" });
+    expect(rows.slice(1).map((r) => r.status)).toEqual(rows.slice(1).map(() => "pending"));
+  });
+
   it("this and all future with the schedule section shown but untouched: nothing is rebuilt", async () => {
     // The form pre-fills "starts" with this visit's date. Read as a new
     // schedule, that once rebuilt every later visit on a price-only save.

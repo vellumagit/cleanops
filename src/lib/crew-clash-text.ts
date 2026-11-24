@@ -89,7 +89,13 @@ const LISTED_PEOPLE = 3;
  */
 export function clashMessage(
   clashes: CrewClash[],
-  opts: { tz: string; visitCount: number },
+  opts: {
+    tz: string;
+    visitCount: number;
+    /** An owner or admin saving one visit: they may keep the overlap and
+     *  sort it out later ("Book anyway", migration 20261124020000). */
+    canBookAnyway?: boolean;
+  },
 ): string | null {
   if (clashes.length === 0) return null;
   const byMember = new Map<string, CrewClash[]>();
@@ -115,8 +121,20 @@ export function clashMessage(
   const next =
     opts.visitCount > 1
       ? "Nothing was changed. Choose someone who is free on every date, or put this crew on single visits and skip those dates."
-      : "Nothing was changed. Pick someone else or another time, or move that job first.";
+      : opts.canBookAnyway
+        ? "Nothing was changed. Pick someone else or another time, move that job first, or press Book anyway to keep both and sort it out later."
+        : "Nothing was changed. Pick someone else or another time, or move that job first.";
   return `${sentences.join(" ")} ${next}`;
+}
+
+/**
+ * What a "Book anyway" press agrees to: these people on these other jobs.
+ * Posted back with the save; a save whose clashes have changed since (a
+ * different time, someone else on the crew, the other job moved) no longer
+ * matches and is asked again.
+ */
+export function clashKey(clashes: CrewClash[]): string {
+  return [...new Set(clashes.map((c) => `${c.memberId}:${c.bookingId}`))].sort().join(",");
 }
 
 /** Postgres exclusion_violation, which the overlap guard raises. */
@@ -131,7 +149,48 @@ const DOUBLE_BOOKING_CODE = "23P01";
  * query throws before any branch can read its code, which is what
  * test/expected-db-errors.test.ts checks at each call site.
  */
-export function isDoubleBookingError(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+export function isDoubleBookingError(
+  err: { code?: string | null; message?: string | null; hint?: string | null } | null | undefined,
+): boolean {
   if (!err) return false;
+  // Same code, different refusal: its own sentence already says who and
+  // when, and there is no other job to name. Callers fall through to the
+  // database's message. Callers asking "is this slot free?" test the code
+  // itself, so they still read it as not free.
+  if (isLastWorkingDayError(err)) return false;
   return (err.code ?? "") === DOUBLE_BOOKING_CODE || /overlapping booking/i.test(err.message ?? "");
+}
+
+/**
+ * The guard refusing someone on a visit after their last working day
+ * (migration 20261124010000). It reuses the overlap code, 23P01, and says
+ * "<name>'s last working day is <date>, so <name> can't be on a visit
+ * after that."
+ */
+export function isLastWorkingDayError(
+  err: { message?: string | null; hint?: string | null } | null | undefined,
+): boolean {
+  if (!err) return false;
+  return (err.hint ?? "") === "last_working_day" || /last working day/i.test(err.message ?? "");
+}
+
+/**
+ * A saved visit whose crew is also on another job at the time ("Book
+ * anyway", or from before the guard), in words for the visit's page:
+ * "Olha is also on Leslie Saumer's job then (Dec 7, 2026 · 9:00 AM)."
+ * Null when there is nothing to say.
+ */
+export function alsoBookedSentence(clashes: CrewClash[], tz: string): string | null {
+  if (clashes.length === 0) return null;
+  const byMember = new Map<string, CrewClash[]>();
+  for (const c of clashes) byMember.set(c.memberId, [...(byMember.get(c.memberId) ?? []), c]);
+  return [...byMember.values()]
+    .map((list) => {
+      const jobs = [...list]
+        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
+        .map((c) => `${c.clientName}'s job (${formatDateTime(c.scheduledAt, tz)})`);
+      const named = jobs.length === 1 ? jobs[0] : `${jobs.slice(0, -1).join(", ")} and ${jobs[jobs.length - 1]}`;
+      return `${list[0].memberName} is also on ${named} at the same time.`;
+    })
+    .join(" ");
 }

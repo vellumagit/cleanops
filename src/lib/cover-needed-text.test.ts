@@ -55,6 +55,21 @@ describe("what a series save says", () => {
   });
 });
 
+describe("someone left off for having finished", () => {
+  const olga: CoverPerson = { membershipId: "o", name: "Olga", otherClient: null, otherAt: null, finishedOn: "2026-12-18" };
+
+  it("gives her last working day as the reason, not another job", () => {
+    expect(coverReason(visit("2027-01-07", [olga]), TZ)).toBe("Olga's last working day is Fri, Dec 18");
+    expect(coverReason(visit("2027-01-07", [{ ...olga, finishedOn: "" }]), TZ)).toBe("Olga was left off this visit");
+  });
+
+  it("a series save says so in its own sentence, beside anyone left off for another job", () => {
+    const said = coverSummary([visit("2027-01-07", [olga, anna]), visit("2027-01-14", [olga])], TZ)!;
+    expect(said).toContain("Olga's last working day is Fri, Dec 18, so Olga was left off 2 visits after it (Thu, Jan 7, Thu, Jan 14).");
+    expect(said).toContain("Anna Cleaner is on another job on 1 visit (Thu, Jan 7) and was left off it.");
+  });
+});
+
 describe("the Needs cover warning chip", () => {
   const job = (over: Partial<WarnableBooking>): WarnableBooking => ({
     id: "j",
@@ -81,5 +96,10 @@ describe("the Needs cover warning chip", () => {
     expect(codes(job({ needs_cover: null }))).not.toContain("needs_cover");
     expect(codes(job({ needs_cover: reason, status: "completed" }))).not.toContain("needs_cover");
     expect(codes(job({ needs_cover: reason, status: "cancelled" }))).not.toContain("needs_cover");
+  });
+
+  it("for a last working day, doesn't say the series' crew was set", () => {
+    const [w] = computeBookingWarnings([job({ needs_cover: "Olga's last working day is Fri, Dec 18" })]).get("j") ?? [];
+    expect(w.detail).toBe("Olga's last working day is Fri, Dec 18. Open it and pick someone else.");
   });
 });

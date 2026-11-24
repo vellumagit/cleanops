@@ -11,6 +11,7 @@
  * for orgs that don't auto-complete).
  */
 
+import { leftOffSentence } from "@/lib/cover-needed-text";
 import { zonedYmd } from "@/lib/wall-clock";
 import { crewOffOnJob } from "@/lib/unavailability";
 
@@ -264,7 +265,7 @@ export function computeBookingWarnings(
       add(b.id, {
         code: "needs_cover",
         label: "Needs cover",
-        detail: `${b.needs_cover}, so they were left off this visit when the series' crew was set. Open it and pick someone else.`,
+        detail: `${leftOffSentence(b.needs_cover)} Open it and pick someone else.`,
         severity: "high",
       });
     }

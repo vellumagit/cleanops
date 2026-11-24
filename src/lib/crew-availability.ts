@@ -88,13 +88,24 @@ export function outsideHoursReason(input: {
   return `Works ${listed} ${that}`;
 }
 
-/** Time off beats another job beats working hours: the first is a firm no,
- *  the last is the softest. One reason per person. */
+/** Finished beats time off beats another job beats working hours: the
+ *  first two are a firm no, the last is the softest. One reason per person.
+ *  `finished` is their last working day (YYYY-MM-DD) when the visit falls
+ *  after it: the save would be refused (migration 20261124010000). */
 export function pickReason(found: {
   off: boolean;
   busy: string | null;
   hours: string | null;
+  finished?: string | null;
 }): Unavailable | null {
+  if (found.finished) {
+    const day = new Date(`${found.finished}T12:00:00Z`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+    return { kind: "off", reason: `Last working day was ${day}` };
+  }
   if (found.off) return { kind: "off", reason: "Off that day" };
   if (found.busy) return { kind: "busy", reason: found.busy };
   if (found.hours) return { kind: "hours", reason: found.hours };

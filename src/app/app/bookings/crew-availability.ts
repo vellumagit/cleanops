@@ -18,8 +18,10 @@ import {
  * Who can't take a visit at this time, and why: for the booking form's crew
  * picker, which then shows the people who are free and tucks the rest away.
  *
- * Three things make someone unavailable, the same three the office already
+ * Four things make someone unavailable, the same four the office already
  * meets later, as a refused save or a declined job:
+ *   - the visit falling after their last working day (the guard refuses it,
+ *     migration 20261124010000),
  *   - approved time off, or the day marked unavailable (the board's grey
  *     stripes; lib/unavailability-notice membersOffOn),
  *   - another job at that time (the database's own overlap rule,
@@ -86,14 +88,19 @@ export async function getCrewAvailabilityAction(input: {
     const admin = createSupabaseAdminClient();
     const { data: people, error: peopleErr } = (await admin
       .from("memberships")
-      .select("id")
+      .select("id, last_working_day" as never)
       .eq("organization_id", orgId)
       .eq("status", "active")) as unknown as {
-      data: Array<{ id: string }> | null;
+      data: Array<{ id: string; last_working_day: string | null }> | null;
       error: { message: string } | null;
     };
     if (peopleErr) throw new Error(peopleErr.message);
     const ids = (people ?? []).map((p) => p.id);
+    // Finished by the visit's date: their last working day is before it.
+    const finishedBy = new Map<string, string>();
+    for (const p of people ?? []) {
+      if (p.last_working_day && ymd > p.last_working_day) finishedBy.set(p.id, p.last_working_day);
+    }
     if (ids.length === 0) return { ok: true, unavailable: {} };
 
     const [off, slotsRes, customRes] = await Promise.all([
@@ -146,9 +153,11 @@ export async function getCrewAvailabilityAction(input: {
           } as never);
           if (error) throw new Error((error as { message: string }).message);
           // `returns setof uuid` arrives as bare strings; tolerate a wrapped row.
+          // The visit itself coming back means "finished by then", which is
+          // read from last_working_day above; it is not another job.
           const found = ((data ?? []) as unknown[])
             .map((row) => (typeof row === "string" ? row : (Object.values((row ?? {}) as object)[0] as string)))
-            .filter((id): id is string => typeof id === "string");
+            .filter((id): id is string => typeof id === "string" && id !== excludeId);
           if (found.length > 0) clashes.set(memberId, found);
         }),
       );
@@ -186,6 +195,7 @@ export async function getCrewAvailabilityAction(input: {
     const unavailable: Record<string, Unavailable> = {};
     for (const id of ids) {
       const reason = pickReason({
+        finished: finishedBy.get(id) ?? null,
         off: offSet.has(id),
         busy: busyReason(id),
         hours: outsideHoursReason({

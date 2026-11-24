@@ -57,15 +57,24 @@ export async function loadCoverNeeded(
   }
 
   const names = new Map<string, string>();
+  const lastDays = new Map<string, string>();
   if (memberIds.size > 0) {
     const { data } = (await admin
       .from("memberships")
-      .select("id, display_name, profile:profiles ( full_name )")
+      .select("id, display_name, last_working_day, profile:profiles ( full_name )" as never)
       .eq("organization_id", organizationId)
       .in("id", [...memberIds])) as unknown as {
-      data: Array<{ id: string; display_name: string | null; profile: { full_name: string | null } | null }> | null;
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        last_working_day: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
     };
-    for (const m of data ?? []) names.set(m.id, memberDisplayName(m));
+    for (const m of data ?? []) {
+      names.set(m.id, memberDisplayName(m));
+      if (m.last_working_day) lastDays.set(m.id, m.last_working_day);
+    }
   }
 
   const others = new Map<string, { client: string | null; at: string }>();
@@ -87,12 +96,17 @@ export async function loadCoverNeeded(
       const people = new Map<string, CoverVisit["people"][number]>();
       for (const c of r.cover_needed ?? []) {
         if (!c.membership_id || people.has(c.membership_id)) continue;
-        const other = c.other_booking_id ? others.get(c.other_booking_id) : undefined;
+        // The visit naming itself as the job in the way is the guard's way
+        // of saying "finished by then" (migration 20261124010000).
+        const finished = c.other_booking_id === r.id;
+        const other = c.other_booking_id && !finished ? others.get(c.other_booking_id) : undefined;
         people.set(c.membership_id, {
           membershipId: c.membership_id,
           name: names.get(c.membership_id) ?? "A cleaner",
           otherClient: other?.client ?? null,
           otherAt: other?.at ?? null,
+          // "" when the date has since been cleared: still not another job.
+          finishedOn: finished ? (lastDays.get(c.membership_id) ?? "") : null,
         });
       }
       return {

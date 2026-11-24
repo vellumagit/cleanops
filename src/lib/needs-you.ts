@@ -11,7 +11,7 @@ import {
 } from "@/lib/needs-you-items";
 import { describeDelta, findSeriesDrift, type SeriesDrift } from "@/lib/series-drift";
 import { loadCoverNeeded } from "@/lib/cover-needed";
-import { coverReason, type CoverVisit } from "@/lib/cover-needed-text";
+import { coverReason, type CoverVisit, leftOffSentence } from "@/lib/cover-needed-text";
 
 /** How far ahead a visit that needs cover is worth a line on the dashboard. */
 const COVER_LOOKAHEAD_DAYS = 7;
@@ -290,7 +290,7 @@ function needsCoverItem(v: CoverVisit, tz: string): NeedsYouItem {
     key: `cover:${v.bookingId}`,
     kind: "needs_cover",
     title: `${v.clientName}, ${when}: needs cover`,
-    body: `${coverReason(v, tz)}, so they were left off this visit when the series' crew was set. Pick someone else.`,
+    body: `${leftOffSentence(coverReason(v, tz))} Pick someone else.`,
     href,
     atMs: new Date(v.scheduledAt).getTime(),
     alert: false,

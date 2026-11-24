@@ -20,8 +20,13 @@ import {
 import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
 import { crewEligibility } from "@/lib/crew-eligibility";
-import { explainDoubleBooking } from "@/lib/crew-clashes";
-import { isDoubleBookingError, type ProposedCrew } from "@/lib/crew-clash-text";
+import { clashesFor, describeDoubleBooking, explainDoubleBooking } from "@/lib/crew-clashes";
+import {
+  clashKey,
+  isDoubleBookingError,
+  type CrewClash,
+  type ProposedCrew,
+} from "@/lib/crew-clash-text";
 import { memberDisplayName } from "@/lib/member-display";
 import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { after } from "next/server";
@@ -63,6 +68,7 @@ import { wallClockColumns, wallClockForInstant } from "@/lib/scheduled-local";
 import { runtimeKnowsZone } from "@/lib/tz-probe";
 import { awayCrewQuestion } from "./time-off-check";
 import { resolveSeriesMove } from "@/lib/series-move";
+import { seriesStatusPatch } from "@/lib/series-status";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { redirectAfterSetup } from "@/lib/setup-return";
@@ -269,6 +275,9 @@ async function overlapExplanation(
     split_duration_minutes: number | null;
   }>,
   bookingPatch: Record<string, Json>,
+  /** A single-visit save that may offer "Book anyway": the clashes are
+   *  handed back here, and the sentence says the button is there. */
+  bookAnyway?: ClashHandling,
 ): Promise<string | null> {
   const admin = createSupabaseAdminClient();
   const ids = [...new Set(rows.map((r) => r.booking_id))];
@@ -303,7 +312,7 @@ async function overlapExplanation(
     typeof bookingPatch.duration_minutes === "number" ? bookingPatch.duration_minutes : null;
   const patchedDivide =
     typeof bookingPatch.divide_hours_evenly === "boolean" ? bookingPatch.divide_hours_evenly : null;
-  return explainDoubleBooking(
+  const described = await describeDoubleBooking(
     admin,
     organizationId,
     visits.map((v) => ({
@@ -319,7 +328,91 @@ async function overlapExplanation(
           durationMinutes: r.split_duration_minutes,
         })),
     })),
+    [],
+    { canBookAnyway: bookAnyway?.canBookAnyway },
   );
+  if (bookAnyway && described) bookAnyway.found = described.clashes;
+  return described?.message ?? null;
+}
+
+/**
+ * "Book anyway" (migration 20261124020000). An owner or admin saving one
+ * visit whose crew is already on another job then may keep the overlap and
+ * sort it out later, as Svitlana asked on 2026-11-23. The first save is
+ * refused as before, naming who and which job, with a key for exactly
+ * those clashes; pressing Book anyway posts the key back as
+ * `confirm_overlap`, and the save goes through only while the clashes are
+ * still the ones they saw.
+ *
+ * Managers keep the plain refusal: this is the company's own rule to bend.
+ * Saves over many visits ("this and all future") never offer it: those
+ * leave a busy cleaner off a visit and mark it as needing cover instead.
+ */
+type ClashHandling = {
+  /** Save with the overlap allowed. */
+  allow?: boolean;
+  /** Say "press Book anyway" in the refusal. */
+  canBookAnyway?: boolean;
+  /** Filled by a refused save: the clashes it named. */
+  found?: CrewClash[];
+};
+
+const mayBookAnyway = (role: string) => role === "owner" || role === "admin";
+
+/**
+ * Has this save come back with a Book anyway press that still matches?
+ * Returns the clashes being kept, or null to save the ordinary way (which
+ * refuses, and asks again, if there is still a clash).
+ */
+async function approvedClashes(
+  organizationId: string,
+  role: string,
+  posted: string,
+  visit: {
+    bookingId: string | null;
+    scheduledAt: string;
+    durationMinutes: number;
+    divideHoursEvenly: boolean | null;
+    crew: ProposedCrew[];
+  },
+): Promise<CrewClash[] | null> {
+  if (!posted || !mayBookAnyway(role) || visit.crew.length === 0) return null;
+  try {
+    const clashes = await clashesFor(createSupabaseAdminClient(), organizationId, [visit]);
+    return clashes.length > 0 && clashKey(clashes) === posted ? clashes : null;
+  } catch (err) {
+    console.error("[bookings] could not re-check the clashes for Book anyway:", err);
+    return null;
+  }
+}
+
+/**
+ * The refusal, turned into the Book anyway question when it may be one.
+ * Carries forward a "yes, book them on their day off" already given: the
+ * time-off question comes first, and without it the press would be asked
+ * that again, and the answer to that would come back here, round and round.
+ */
+function bookAnywayQuestion(
+  role: string,
+  clash: ClashHandling,
+  formData: FormData,
+): { confirm_overlap: string; confirm_time_off: string } | null {
+  if (!mayBookAnyway(role) || !clash.found || clash.found.length === 0) return null;
+  return {
+    confirm_overlap: clashKey(clash.found),
+    confirm_time_off: String(formData.get("confirm_time_off") ?? ""),
+  };
+}
+
+/** Kept for the audit log: who was booked over which job. */
+function clashAudit(clashes: CrewClash[]) {
+  return clashes.map((c) => ({
+    membership_id: c.memberId,
+    name: c.memberName,
+    other_booking_id: c.bookingId,
+    other_client: c.clientName,
+    other_scheduled_at: c.scheduledAt,
+  }));
 }
 
 /**
@@ -490,6 +583,8 @@ async function syncBookingAssignees(
   additionalIds: string[],
   splits?: SplitSegmentInput[],
   bookingPatch?: Record<string, Json>,
+  buildOnly?: false,
+  clash?: ClashHandling,
 ): Promise<string | null>;
 async function syncBookingAssignees(
   supabase: Awaited<
@@ -518,6 +613,7 @@ async function syncBookingAssignees(
   splits: SplitSegmentInput[] = [],
   bookingPatch: Record<string, Json> = {},
   buildOnly = false,
+  clash: ClashHandling = {},
 ): Promise<
   | string
   | null
@@ -638,7 +734,9 @@ async function syncBookingAssignees(
   if (buildOnly) return updatedRows;
 
   const { error: insertErr } = await createSupabaseAdminClient().rpc(
-    "update_booking_assignments_v2",
+    (clash.allow
+      ? "update_booking_assignments_allow_clashes"
+      : "update_booking_assignments_v2") as "update_booking_assignments_v2",
     {
       p_organization_id: organizationId,
       p_booking_ids: [bookingId],
@@ -657,8 +755,8 @@ async function syncBookingAssignees(
     // database's own sentence ("A cleaner already has an overlapping
     // booking") named none of the three.
     if (isDoubleBookingError(insertErr)) {
-      const clash = await overlapExplanation(organizationId, updatedRows, bookingPatch);
-      if (clash) return clash;
+      const said = await overlapExplanation(organizationId, updatedRows, bookingPatch, clash);
+      if (said) return said;
     }
     const operation = Object.keys(bookingPatch).length
       ? "booking and crew"
@@ -1048,13 +1146,37 @@ export async function createBookingAction(
     (splits as SplitSegmentInput[]).length === 0 &&
     !!effectiveAssignedTo &&
     readAdditionalAssignees(formData).some((id) => id !== effectiveAssignedTo);
+  const proposedCrew = proposedCrewFrom(
+    effectiveAssignedTo,
+    readAdditionalAssignees(formData),
+    splits as SplitSegmentInput[],
+  );
+  // Pressed "Book anyway" on a refusal, and the clashes are still those?
+  // Then the row goes in with nobody on it, and the whole crew goes on in
+  // the crew save with the overlap allowed: the row's own check would
+  // otherwise refuse the lead before the crew save could say "allow".
+  const kept = ["cancelled", "completed"].includes(parsed.data.status)
+    ? null
+    : await approvedClashes(
+        membership.organization_id,
+        membership.role,
+        String(formData.get("confirm_overlap") ?? ""),
+        {
+          bookingId: null,
+          scheduledAt: parsed.data.scheduled_at,
+          durationMinutes: parsed.data.duration_minutes,
+          divideHoursEvenly: parsed.data.divide_hours_evenly,
+          crew: proposedCrew,
+        },
+      );
+  const crewLater = leadWithCrew || !!kept;
   // 23P01: the database refusing a cleaner who is already booked then.
   const { data: booking, error } = await allowDbErrors(["23P01"], supabase
     .from("bookings")
     .insert({
       organization_id: membership.organization_id,
       client_id: parsed.data.client_id,
-      assigned_to: leadWithCrew ? null : effectiveAssignedTo,
+      assigned_to: crewLater ? null : effectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       // The time as typed, in the org's zone: the truth scheduled_at is
       // derived from (scheduled-local.ts).
@@ -1079,43 +1201,53 @@ export async function createBookingAction(
       notes: parsed.data.notes ?? null,
       divide_hours_evenly: parsed.data.divide_hours_evenly,
       is_free: parsed.data.is_free,
-      splits: splits,
+      splits: kept ? [] : splits,
     })
     .select("id")
     .single());
 
   if (error) {
-    const doubleBooked = error.code === "23P01";
-    const clash =
-      doubleBooked
-        ? await explainDoubleBooking(createSupabaseAdminClient(), membership.organization_id, [
+    // The same code also carries "past her last working day", which has
+    // its own sentence and no Book anyway.
+    const doubleBooked = isDoubleBookingError(error);
+    const described = doubleBooked
+      ? await describeDoubleBooking(
+          createSupabaseAdminClient(),
+          membership.organization_id,
+          [
             {
               bookingId: null,
               scheduledAt: parsed.data.scheduled_at,
               durationMinutes: parsed.data.duration_minutes,
               divideHoursEvenly: parsed.data.divide_hours_evenly,
-              crew: proposedCrewFrom(
-                effectiveAssignedTo,
-                readAdditionalAssignees(formData),
-                splits as SplitSegmentInput[],
-              ),
+              crew: proposedCrew,
             },
-          ])
-        : null;
+          ],
+          [],
+          { canBookAnyway: mayBookAnyway(membership.role) },
+        )
+      : null;
+    const ask = described
+      ? bookAnywayQuestion(membership.role, { found: described.clashes }, formData)
+      : null;
     return {
       errors: {
         _form: doubleBooked
-          ? (clash ??
+          ? (described?.message ??
             "A cleaner on this job is already booked at that time. Pick a different cleaner or time, or move the other job first.")
           : error.message,
       },
-      values: raw,
+      values: { ...raw, ...(ask ?? {}) },
     };
   }
 
   // Additional crew (if any) — write to booking_assignees so the primary
   // + extras are all tracked consistently. For split shifts, pass the
   // segments array so each employee gets a row with offset/duration.
+  const createClash: ClashHandling = {
+    allow: !!kept,
+    canBookAnyway: mayBookAnyway(membership.role),
+  };
   const crewErr = await syncBookingAssignees(
     supabase,
     membership.organization_id,
@@ -1123,7 +1255,13 @@ export async function createBookingAction(
     effectiveAssignedTo,
     readAdditionalAssignees(formData),
     splits as SplitSegmentInput[],
-    leadWithCrew ? { assigned_to: effectiveAssignedTo } : {},
+    kept
+      ? { assigned_to: effectiveAssignedTo, splits: splits as unknown as Json }
+      : leadWithCrew
+        ? { assigned_to: effectiveAssignedTo }
+        : {},
+    false,
+    createClash,
   );
   if (crewErr) {
     const { error: cleanupErr } = await createSupabaseAdminClient()
@@ -1131,14 +1269,25 @@ export async function createBookingAction(
       .delete()
       .eq("id", booking.id)
       .eq("organization_id", membership.organization_id);
+    const ask = cleanupErr ? null : bookAnywayQuestion(membership.role, createClash, formData);
     return {
       errors: {
         _form: cleanupErr
           ? `${crewErr} The booking could not be removed after the crew save failed: ${cleanupErr.message}`
           : crewErr,
       },
-      values: raw,
+      values: { ...raw, ...(ask ?? {}) },
     };
+  }
+
+  if (kept) {
+    await logAuditEvent({
+      membership,
+      action: "create",
+      entity: "booking",
+      entity_id: booking.id,
+      after: { booked_over_clash: clashAudit(kept), via: "book_anyway" },
+    });
   }
 
   // Email booking confirmation to client (fire-and-forget) — unless the
@@ -2054,7 +2203,33 @@ export async function updateBookingAction(
   const isSeriesPropagation =
     updateScope === "this_and_future" && !!seriesId && !!seriesScheduledAt;
 
+  // Pressed "Book anyway" on a refusal of this one visit, and the clashes
+  // are still those? Then it saves with the overlap in it.
+  const keptClashes =
+    isSeriesPropagation || ["cancelled", "completed"].includes(parsed.data.status)
+      ? null
+      : await approvedClashes(
+          membership.organization_id,
+          membership.role,
+          String(formData.get("confirm_overlap") ?? ""),
+          {
+            bookingId: id,
+            scheduledAt: parsed.data.scheduled_at,
+            durationMinutes: parsed.data.duration_minutes,
+            divideHoursEvenly: parsed.data.divide_hours_evenly,
+            crew: proposedCrewFrom(
+              updateEffectiveAssignedTo,
+              readAdditionalAssignees(formData),
+              updateSplits as SplitSegmentInput[],
+            ),
+          },
+        );
+
   if (!isSeriesPropagation) {
+    const editClash: ClashHandling = {
+      allow: !!keptClashes,
+      canBookAnyway: mayBookAnyway(membership.role),
+    };
     const updateCrewErr = await syncBookingAssignees(
       supabase,
       membership.organization_id,
@@ -2063,8 +2238,22 @@ export async function updateBookingAction(
       readAdditionalAssignees(formData),
       updateSplits as SplitSegmentInput[],
       bookingPatch,
+      false,
+      editClash,
     );
-    if (updateCrewErr) return { errors: { _form: updateCrewErr }, values: raw };
+    if (updateCrewErr) {
+      const ask = bookAnywayQuestion(membership.role, editClash, formData);
+      return { errors: { _form: updateCrewErr }, values: { ...raw, ...(ask ?? {}) } };
+    }
+    if (keptClashes) {
+      await logAuditEvent({
+        membership,
+        action: "update",
+        entity: "booking",
+        entity_id: id,
+        after: { booked_over_clash: clashAudit(keptClashes), via: "book_anyway" },
+      });
+    }
   }
 
   // The edit form asks the owner whether the client should hear about a
@@ -2168,8 +2357,19 @@ export async function updateBookingAction(
     const admin = createSupabaseAdminClient();
 
     // Fields that propagate to future bookings regardless of schedule change.
-    // We intentionally do NOT touch scheduled_at or status on siblings —
-    // each occurrence keeps its own date and lifecycle.
+    // scheduled_at never goes to siblings: each occurrence keeps its own date.
+    //
+    // STATUS goes only when this save CHANGED it between Pending and
+    // Confirmed (seriesStatusPatch). Svitlana confirms a series two or three
+    // months ahead: she opens the first visit past what is confirmed, picks
+    // Pending and "this and all future", and every later visit should read
+    // Pending. It used to stay on this one visit (2026-11-23). An untouched
+    // status is left alone, so a crew or notes save made from a confirmed
+    // visit doesn't wipe the Pending marks on the ones after it. Nothing
+    // else is ever carried: a sibling is never completed or cancelled from
+    // another visit's form. Siblings already under way or done aren't
+    // touched by the RPC at all (it only writes to visits not completed or
+    // cancelled), and en_route/in_progress are excluded below.
     //
     // SPLIT-SHIFT NOTES:
     //   - assigned_to uses updateEffectiveAssignedTo so siblings get the
@@ -2194,6 +2394,17 @@ export async function updateBookingAction(
       notes: parsed.data.notes ?? null,
       splits: updateSplits,
     };
+    // Only from a visit still ahead: every later visit is then days away and
+    // can't be under way, so nothing en route is knocked back to Pending.
+    const siblingStatus =
+      new Date(seriesScheduledAt).getTime() > Date.now()
+        ? seriesStatusPatch(existing?.status, parsed.data.status)
+        : null;
+    // Not in propagatableFields: that object is also the series template's
+    // patch, and a template has no status.
+    const siblingPatch = siblingStatus
+      ? { ...propagatableFields, status: siblingStatus }
+      : propagatableFields;
 
     // Check whether the owner is also changing the recurrence schedule.
     // The form signals this by including a hidden `series_update_schedule=1`
@@ -2534,6 +2745,8 @@ export async function updateBookingAction(
           service_type: seriesServiceTypeEnum,
           service_type_id: updateServiceExtras.service_type_id,
           service_type_label: updateServiceExtras.service_type_label,
+          // The rebuild function takes confirmed rows only; a Pending save
+          // marks them below, once they exist.
           status: "confirmed" as const,
           total_cents: parsed.data.total_cents,
           address: parsed.data.address ?? null,
@@ -2621,6 +2834,20 @@ export async function updateBookingAction(
         const deletedSiblingIds = new Set(
           deletedSiblings.map((sibling) => sibling.id),
         );
+
+        // "Pending, this and all future" with a new day or time: the rebuilt
+        // visits are made Confirmed (the rebuild function's rule), so mark
+        // them Pending now. A status-only write: the overlap guard ignores it.
+        if (siblingStatus === "pending" && regenRows.length > 0) {
+          const { error: pendingErr } = await admin
+            .from("bookings")
+            .update({ status: "pending" })
+            .eq("organization_id", membership.organization_id)
+            .in("id", regenRows.map((row) => row.id));
+          if (pendingErr) {
+            console.error("[series-reschedule] could not mark rebuilt visits pending:", pendingErr.message);
+          }
+        }
 
         for (const sib of deletedSiblings) {
           if (sib.google_calendar_event_id) {
@@ -2753,7 +2980,7 @@ export async function updateBookingAction(
           p_from: seriesScheduledAt,
           p_current_booking_patch: bookingPatch,
           p_current_assignees: currentAssignees as unknown as Json,
-          p_sibling_booking_patch: propagatableFields as Json,
+          p_sibling_booking_patch: siblingPatch as Json,
           p_series_patch: seriesTemplateFields() as Json,
           p_replace_schedule: false,
           p_booking_rows: [],

@@ -1407,3 +1407,104 @@ export async function cancelScheduledRateAction(
   revalidatePath(`/app/employees/${data[0].membership_id}`);
   return { ok: true };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Last working day                                                   */
+/* ------------------------------------------------------------------ */
+
+export type LastWorkingDayResult =
+  | { ok: true; lastDay: string | null; removed: Array<{ id: string; scheduled_at: string }> }
+  | { ok: false; error: string };
+
+/**
+ * Set (or clear) the last date someone works. From then on the database
+ * refuses them on any visit after it (migration 20261124010000), and
+ * setting it takes them off every open visit after it now, each marked
+ * "Needs cover" so the office sees what to re-staff.
+ *
+ * Svitlana, 2026-11-23: a cleaner finishing December 18 had to stay active
+ * (she still works until then), so nothing stopped her being put on visits
+ * in January.
+ */
+export async function setLastWorkingDayAction(
+  memberId: string,
+  lastDayInput: string | null,
+): Promise<LastWorkingDayResult> {
+  const { membership } = await getActionContext();
+  if (membership.role !== "owner" && membership.role !== "admin") {
+    return { ok: false, error: "Only owners and admins can set a last working day." };
+  }
+  const lastDay = (lastDayInput ?? "").trim() || null;
+  if (lastDay !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(lastDay) || Number.isNaN(Date.parse(`${lastDay}T12:00:00Z`)))) {
+    return { ok: false, error: "Pick a date." };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: member, error: readErr } = (await admin
+    .from("memberships")
+    .select("id, status, last_working_day" as never)
+    .eq("id", memberId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; status: string; last_working_day: string | null } | null;
+    error: { message: string } | null;
+  };
+  if (readErr) return { ok: false, error: readErr.message };
+  if (!member) return { ok: false, error: "Employee not found." };
+
+  const { error: updErr } = await admin
+    .from("memberships")
+    .update({ last_working_day: lastDay } as never)
+    .eq("id", memberId)
+    .eq("organization_id", membership.organization_id);
+  if (updErr) return { ok: false, error: updErr.message };
+
+  let removed: Array<{ id: string; scheduled_at: string }> = [];
+  if (lastDay) {
+    const { data, error } = (await admin.rpc("take_member_off_after_last_day" as never, {
+      p_organization_id: membership.organization_id,
+      p_membership_id: memberId,
+    } as never)) as unknown as {
+      data: Array<{ booking_id: string; scheduled_at: string }> | null;
+      error: { message: string } | null;
+    };
+    if (error) {
+      return {
+        ok: false,
+        error: `The date is saved, but taking them off the visits after it failed: ${error.message}. Save the date again to retry.`,
+      };
+    }
+    removed = (data ?? []).map((r) => ({ id: r.booking_id, scheduled_at: r.scheduled_at }));
+  }
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "membership",
+    entity_id: memberId,
+    before: { last_working_day: member.last_working_day },
+    after: { last_working_day: lastDay, visits_taken_off: removed.length },
+  });
+
+  // Their job states, and the company's and their own calendars, follow.
+  if (removed.length > 0) {
+    const ids = removed.map((r) => r.id);
+    const { after } = await import("next/server");
+    after(async () => {
+      try {
+        const { syncJob } = await import("@/lib/job-sync");
+        for (const id of ids) await syncJob(id, "last_working_day");
+        const { resyncBookingCalendarsPaced } = await import("@/lib/booking-calendar-sync");
+        await resyncBookingCalendarsPaced(ids);
+      } catch (err) {
+        console.error("[employees] follow-up after last working day failed:", err);
+      }
+    });
+  }
+
+  revalidatePath(`/app/employees/${memberId}`);
+  revalidatePath(`/app/employees/${memberId}/edit`);
+  revalidatePath("/app/bookings");
+  revalidatePath("/app/scheduling");
+  return { ok: true, lastDay, removed };
+}

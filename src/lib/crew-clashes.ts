@@ -103,6 +103,93 @@ export async function findCrewClashes(
   return clashes;
 }
 
+type VisitInput = Omit<ProposedVisit, "dividesHours"> & { divideHoursEvenly?: boolean | null };
+
+/**
+ * findCrewClashes with the company's shared-hours setting read for the
+ * caller. Throws on a failed read.
+ */
+export async function clashesFor(
+  admin: SupabaseClient,
+  organizationId: string,
+  visits: VisitInput[],
+  ignoreBookingIds: string[] = [],
+): Promise<CrewClash[]> {
+  if (visits.length === 0) return [];
+  const orgDivides = await orgDividesCrewHours(organizationId);
+  return findCrewClashes(
+    admin,
+    organizationId,
+    visits.map((v) => ({
+      bookingId: v.bookingId,
+      scheduledAt: v.scheduledAt,
+      durationMinutes: v.durationMinutes,
+      crew: v.crew,
+      dividesHours: v.divideHoursEvenly === true || orgDivides,
+    })),
+    ignoreBookingIds,
+  );
+}
+
+/**
+ * Who on a saved visit is also on another job at the same time: a visit
+ * someone kept with "Book anyway", or one from before the guard. Read for
+ * the visit's own page. Empty for a visit that is finished or cancelled.
+ */
+export async function clashesOnVisit(
+  admin: SupabaseClient,
+  organizationId: string,
+  bookingId: string,
+): Promise<CrewClash[]> {
+  const { data: b, error } = (await admin
+    .from("bookings")
+    .select("id, scheduled_at, duration_minutes, divide_hours_evenly, assigned_to, status")
+    .eq("organization_id", organizationId)
+    .eq("id", bookingId)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number | null;
+      divide_hours_evenly: boolean | null;
+      assigned_to: string | null;
+      status: string;
+    } | null;
+    error: { message: string } | null;
+  };
+  if (error) throw new Error(error.message);
+  if (!b || b.status === "cancelled" || b.status === "completed") return [];
+  const { data: rows, error: rowsErr } = (await admin
+    .from("booking_assignees")
+    .select("membership_id, split_start_offset_minutes, split_duration_minutes")
+    .eq("booking_id", bookingId)) as unknown as {
+    data: Array<{
+      membership_id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+    }> | null;
+    error: { message: string } | null;
+  };
+  if (rowsErr) throw new Error(rowsErr.message);
+  const crew = (rows ?? []).map((r) => ({
+    membershipId: r.membership_id,
+    startOffsetMinutes: r.split_start_offset_minutes,
+    durationMinutes: r.split_duration_minutes,
+  }));
+  if (b.assigned_to && !crew.some((c) => c.membershipId === b.assigned_to)) {
+    crew.push({ membershipId: b.assigned_to, startOffsetMinutes: null, durationMinutes: null });
+  }
+  return clashesFor(admin, organizationId, [
+    {
+      bookingId: b.id,
+      scheduledAt: b.scheduled_at,
+      durationMinutes: b.duration_minutes ?? 0,
+      divideHoursEvenly: b.divide_hours_evenly,
+      crew,
+    },
+  ]);
+}
+
 /**
  * The refusal in words for these visits, or null when no clash could be
  * named (the caller then keeps its plain sentence). Never throws: this runs
@@ -112,28 +199,35 @@ export async function findCrewClashes(
 export async function explainDoubleBooking(
   admin: SupabaseClient,
   organizationId: string,
-  visits: Array<Omit<ProposedVisit, "dividesHours"> & { divideHoursEvenly?: boolean | null }>,
+  visits: VisitInput[],
   ignoreBookingIds: string[] = [],
 ): Promise<string | null> {
+  return (await describeDoubleBooking(admin, organizationId, visits, ignoreBookingIds))?.message ?? null;
+}
+
+/**
+ * The same, with the clashes themselves, for a save that may offer "Book
+ * anyway". Never throws.
+ */
+export async function describeDoubleBooking(
+  admin: SupabaseClient,
+  organizationId: string,
+  visits: VisitInput[],
+  ignoreBookingIds: string[] = [],
+  opts: { canBookAnyway?: boolean } = {},
+): Promise<{ message: string; clashes: CrewClash[] } | null> {
   try {
     if (visits.length === 0) return null;
-    const [orgDivides, tz] = await Promise.all([
-      orgDividesCrewHours(organizationId),
+    const [clashes, tz] = await Promise.all([
+      clashesFor(admin, organizationId, visits, ignoreBookingIds),
       getOrgTimezone(organizationId),
     ]);
-    const clashes = await findCrewClashes(
-      admin,
-      organizationId,
-      visits.map((v) => ({
-        bookingId: v.bookingId,
-        scheduledAt: v.scheduledAt,
-        durationMinutes: v.durationMinutes,
-        crew: v.crew,
-        dividesHours: v.divideHoursEvenly === true || orgDivides,
-      })),
-      ignoreBookingIds,
-    );
-    return clashMessage(clashes, { tz, visitCount: visits.length });
+    const message = clashMessage(clashes, {
+      tz,
+      visitCount: visits.length,
+      canBookAnyway: opts.canBookAnyway && visits.length === 1,
+    });
+    return message ? { message, clashes } : null;
   } catch (err) {
     console.error("[crew-clashes] could not name the clash:", err);
     return null;

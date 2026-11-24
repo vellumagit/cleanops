@@ -307,6 +307,35 @@ describe.skipIf(!hasPostgrest)("extend-series: the next visits of every recurrin
     expect(await visitsOf(clashing)).toHaveLength(visits.length);
   });
 
+  it("someone with a last working day is on the new visits up to it and left off the rest, which are marked; the run is clean", async () => {
+    // Migration 20261124010000. Anna stays on every visit; Bea finishes the
+    // day after the second new Monday.
+    const { GET } = await import("@/app/api/cron/extend-series/route");
+    const c = await company();
+    const latest = mondayAhead(7);
+    const series = await weeklySeries(c, { latestDay: latest, crew: [{ m: c.anna }, { m: c.bea }] });
+    const lastDay = ymd(latest + 14 * DAY + DAY);
+    await api.sql("update public.memberships set last_working_day = $2 where id = $1", [c.bea.membershipId, lastDay]);
+    await onlySeriesOf(c.org);
+
+    const run = await runCron(GET, "/api/cron/extend-series");
+    expect(run, api.log()).toEqual({ status: 200, body: { generated: 4 } });
+
+    const fresh = (await visitsOf(series)).slice(1);
+    expect(fresh).toHaveLength(4);
+    for (const [i, v] of fresh.entries()) {
+      const crew = (await crewOf(v.id)).map((r) => r.membership_id).sort();
+      const [row] = await api.sql<{ cover: unknown }>("select cover_needed as cover from public.bookings where id = $1", [v.id]);
+      if (i < 2) {
+        expect(crew, `week ${i + 1}`).toEqual([c.anna.membershipId, c.bea.membershipId].sort());
+        expect(row.cover).toBeNull();
+      } else {
+        expect(crew, `week ${i + 1}`).toEqual([c.anna.membershipId]);
+        expect(row.cover).toEqual([{ membership_id: c.bea.membershipId, other_booking_id: v.id }]);
+      }
+    }
+  });
+
   it("a company whose zone this computer has wrong gets no visits tonight, and the morning email says so", async () => {
     const { GET } = await import("@/app/api/cron/extend-series/route");
     const ok = await company();

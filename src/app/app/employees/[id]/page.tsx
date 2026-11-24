@@ -68,7 +68,7 @@ export default async function EmployeeFilePage({
   const { data: member } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, capabilities, display_name, contact_email, contact_phone, created_at, deactivated_at, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, capabilities, display_name, contact_email, contact_phone, created_at, deactivated_at, last_working_day, profile:profiles(full_name, phone)" as never,
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
@@ -85,6 +85,7 @@ export default async function EmployeeFilePage({
       contact_phone: string | null;
       created_at: string;
       deactivated_at: string | null;
+      last_working_day: string | null;
       capabilities: unknown;
       profile: { full_name: string | null; phone: string | null } | null;
     } | null;
@@ -382,6 +383,17 @@ export default async function EmployeeFilePage({
                 <StatusBadge tone={statusTone(member.status)}>
                   {humanizeEnum(member.status)}
                 </StatusBadge>
+                {member.status === "active" && member.last_working_day && (
+                  <StatusBadge tone="amber">
+                    Last day{" "}
+                    {new Date(`${member.last_working_day}T12:00:00Z`).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      timeZone: "UTC",
+                    })}
+                  </StatusBadge>
+                )}
                 {isShadow && (
                   <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
                     Manually added

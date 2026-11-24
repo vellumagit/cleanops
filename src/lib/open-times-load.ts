@@ -92,17 +92,22 @@ export async function loadOpenTimes(input: {
     (visit
       ? admin
           .from("memberships")
-          .select("id, display_name, profile:profiles ( full_name )")
+          .select("id, display_name, last_working_day, profile:profiles ( full_name )" as never)
           .eq("organization_id", orgId)
           .eq("status", "active")
           .in("id", visit.crewIds.length > 0 ? visit.crewIds : ["00000000-0000-0000-0000-000000000000"])
       : admin
           .from("memberships")
-          .select("id, display_name, profile:profiles ( full_name )")
+          .select("id, display_name, last_working_day, profile:profiles ( full_name )" as never)
           .eq("organization_id", orgId)
           .eq("status", "active")
           .eq("takes_online_bookings" as never, true as never)) as unknown as Promise<{
-      data: Array<{ id: string; display_name: string | null; profile: { full_name: string | null } | null }> | null;
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        last_working_day: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
       error: { message: string } | null;
     }>,
   ]);
@@ -129,7 +134,9 @@ export async function loadOpenTimes(input: {
   if (visit && (peopleRes.data ?? []).length < visit.crewIds.length) {
     return { ok: false, error: "This visit can't be moved here." };
   }
-  const cleaners = (peopleRes.data ?? []).map((m) => ({ id: m.id, name: memberDisplayName(m) })).sort((a, b) => a.name.localeCompare(b.name));
+  const cleaners = (peopleRes.data ?? [])
+    .map((m) => ({ id: m.id, name: memberDisplayName(m), lastDay: m.last_working_day ?? null }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const ids = cleaners.map((c) => c.id);
 
   const todayYmd = zonedYmd(new Date(nowMs), tz);
@@ -266,7 +273,9 @@ export async function loadOpenTimes(input: {
       const hasAny = !!mine && Object.values(mine).some((list) => list.length > 0);
       return {
         id: c.id,
-        off: offDays.has(`${c.id}|${ymd}`),
+        // After their last working day they can't be booked at all
+        // (migration 20261124010000): as good as a day off.
+        off: offDays.has(`${c.id}|${ymd}`) || (!!c.lastDay && ymd > c.lastDay),
         // Hours given for this date replace the weekly ones. No hours on
         // file at all is "unknown", so nothing is held against them.
         hours: custom.get(`${c.id}|${ymd}`) ?? (hasAny ? (mine![weekday] ?? []) : null),

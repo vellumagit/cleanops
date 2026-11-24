@@ -30,7 +30,10 @@ import { jobStillOpen } from "@/lib/crew-eligibility";
 import { InactiveCrewWarning } from "@/components/inactive-crew-warning";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { loadCoverNeeded } from "@/lib/cover-needed";
-import { coverReason } from "@/lib/cover-needed-text";
+import { coverReason, leftOffSentence } from "@/lib/cover-needed-text";
+import { clashesOnVisit } from "@/lib/crew-clashes";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { alsoBookedSentence } from "@/lib/crew-clash-text";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
@@ -99,13 +102,23 @@ export default async function BookingDetailPage({
   const tz = await getOrgTimezone(membership.organization_id);
   // Left off by a series' crew save (another job at that time)? Read on its
   // own so the page never depends on it.
+  // Kept with "Book anyway" (or from before the overlap guard): who on the
+  // crew is on another job at the same time. Read beside the cover mark, on
+  // its own, so the page never depends on it.
   let needsCover: string | null = null;
-  try {
-    const [marked] = await loadCoverNeeded(membership.organization_id, { bookingIds: [id] });
-    if (marked) needsCover = coverReason(marked, tz);
-  } catch (err) {
-    console.error("[booking] could not read whether this visit needs cover:", err);
-  }
+  let doubleBooked: string | null = null;
+  await Promise.all([
+    loadCoverNeeded(membership.organization_id, { bookingIds: [id] })
+      .then(([marked]) => {
+        if (marked) needsCover = coverReason(marked, tz);
+      })
+      .catch((err) => console.error("[booking] could not read whether this visit needs cover:", err)),
+    clashesOnVisit(createSupabaseAdminClient(), membership.organization_id, id)
+      .then((clashes) => {
+        doubleBooked = alsoBookedSentence(clashes, tz);
+      })
+      .catch((err) => console.error("[booking] could not read this visit's clashes:", err)),
+  ]);
 
   /*
    * What the CLIENT has said about this visit from their portal — a note for
@@ -547,14 +560,24 @@ export default async function BookingDetailPage({
                 {closeError}
               </p>
             )}
+            {doubleBooked && (
+              <p
+                role="status"
+                data-testid="double-booked"
+                className="basis-full rounded-md border border-amber-400 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+              >
+                <span className="font-semibold">Double-booked.</span> {doubleBooked} Move one of the jobs, or
+                change the crew on one; this note goes once they no longer overlap.
+              </p>
+            )}
             {needsCover && (
               <p
                 role="status"
                 data-testid="needs-cover"
                 className="basis-full rounded-md border border-amber-400 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
               >
-                <span className="font-semibold">Needs cover.</span> {needsCover}, so they were left off this
-                visit when the series&rsquo; crew was set. Use {booking.assigned ? "Change crew" : "Assign crew"} to
+                <span className="font-semibold">Needs cover.</span> {leftOffSentence(needsCover)} Use{" "}
+                {booking.assigned ? "Change crew" : "Assign crew"} to
                 pick someone else; this note goes once the crew is saved.
               </p>
             )}

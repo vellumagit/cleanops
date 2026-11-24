@@ -3743,40 +3743,54 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // nobody.
       const namedCrew = crewForGeneration(s);
       let crew = namedCrew;
+      // Last working day per person (migration 20261124010000): someone who
+      // has finished by a visit's date is left off that visit.
+      const lastDayOf = new Map<string, string>();
       if (namedCrew.length > 0) {
         const { data: activeRows, error: activeErr } = (await db
           .from("memberships")
-          .select("id")
+          .select("id, last_working_day" as never)
           .eq("organization_id", s.organization_id)
           .eq("status", "active")
           .in(
             "id",
             namedCrew.map((m) => m.membership_id),
           )) as unknown as {
-          data: Array<{ id: string }> | null;
+          data: Array<{ id: string; last_working_day: string | null }> | null;
           error: { message: string } | null;
         };
         if (activeErr) throw new Error(activeErr.message);
         crew = activeCrewOnly(namedCrew, new Set((activeRows ?? []).map((r) => r.id)));
+        for (const r of activeRows ?? []) if (r.last_working_day) lastDayOf.set(r.id, r.last_working_day);
         if (crew.length < namedCrew.length) {
           console.warn(
             `[extend-series] ${s.id}: ${namedCrew.length - crew.length} person(s) on the template are no longer active and were left off ${occurrences.length} new visit(s)`,
           );
         }
       }
-      const crewSplits = splitsFromCrew(crew);
-      const firstMember = crew[0]?.membership_id ?? null;
       const { zonedYmd } = await import("@/lib/wall-clock");
       const { wallClockColumns } = await import("@/lib/scheduled-local");
+      /** The crew a visit on this date gets: minus anyone finished by then. */
+      const crewOn = (scheduledAt: string) => {
+        if (lastDayOf.size === 0) return crew;
+        const ymd = zonedYmd(new Date(scheduledAt), orgTz);
+        return crew.filter((m) => {
+          const last = lastDayOf.get(m.membership_id);
+          return !last || ymd <= last;
+        });
+      };
 
-      const rows = occurrences.map((scheduled_at) => ({
+      const rows = occurrences.map((scheduled_at) => {
+        const visitCrew = crewOn(scheduled_at);
+        const crewSplits = splitsFromCrew(visitCrew);
+        return {
         organization_id: s.organization_id,
         client_id: s.client_id,
         package_id: s.package_id,
         // Mirrors the first crew member for code that still reads the
         // single-cleaner column. Not a lead: nobody on the crew outranks
         // anyone else.
-        assigned_to: firstMember,
+        assigned_to: visitCrew[0]?.membership_id ?? null,
         // Same shape the booking form saves, so a generated visit opens in
         // the editor showing the per-cleaner times it really has.
         ...(crewSplits.length > 0 ? { splits: crewSplits } : {}),
@@ -3803,7 +3817,8 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         property_id: (s as { property_id?: string | null }).property_id ?? null,
         notes: s.notes ? `[Recurring] ${s.notes}` : "[Recurring]",
         series_id: s.id,
-      }));
+        };
+      });
 
       // Upsert with ignoreDuplicates against bookings_series_occurrence_uidx:
       // this cron racing itself (overlapping invocations) or a concurrent
@@ -3898,12 +3913,13 @@ export async function autoExtendRecurringSeries(): Promise<number> {
           for (const r of acceptedRows ?? []) accepted.add(r.membership_id);
         }
 
-        const windows = crewSplits.length > 0;
         const now = new Date().toISOString();
         const junctionRows = inserted
           .filter((b) => !unstaffedIds.has(b.id))
-          .flatMap((b) =>
-          crew.map((m, i) => ({
+          .flatMap((b) => {
+          const visitCrew = crewOn(b.scheduled_at);
+          const windows = splitsFromCrew(visitCrew).length > 0;
+          return visitCrew.map((m, i) => ({
             organization_id: s.organization_id,
             booking_id: b.id,
             membership_id: m.membership_id,
@@ -3915,8 +3931,18 @@ export async function autoExtendRecurringSeries(): Promise<number> {
               ? "accepted"
               : "pending",
             responded_at: accepted.has(m.membership_id) ? now : null,
-          })),
-        );
+          }));
+        });
+        // Whoever was left off for having finished by then: the visit says
+        // so ("Needs cover"), the same mark setting the date leaves.
+        if (lastDayOf.size > 0) {
+          for (const b of inserted) {
+            const on = new Set(crewOn(b.scheduled_at).map((m) => m.membership_id));
+            for (const m of crew) {
+              if (!on.has(m.membership_id)) await markNeedsCover(db, b.id, m.membership_id, b.id);
+            }
+          }
+        }
         // Read it. A visit generated with no crew rows is invisible to every
         // cleaner's field app, so a failure here has to be loud. A crew
         // member the overlap guard refuses is left off that one visit and
@@ -4007,7 +4033,14 @@ export async function autoExtendRecurringSeries(): Promise<number> {
  * crew save leaves, so the visit shows "Needs cover" on the list, the
  * schedule and the dashboard. Best-effort: the visit exists either way.
  */
-async function markNeedsCover(db: ReturnType<typeof admin>, bookingId: string, membershipId: string): Promise<void> {
+async function markNeedsCover(
+  db: ReturnType<typeof admin>,
+  bookingId: string,
+  membershipId: string,
+  /** The job in the way. The visit's own id means "finished by then"
+   *  (last working day), as the database's guard marks it. */
+  otherBookingId?: string,
+): Promise<void> {
   try {
     const { data: row } = (await db
       .from("bookings")
@@ -4018,7 +4051,12 @@ async function markNeedsCover(db: ReturnType<typeof admin>, bookingId: string, m
     if (list.some((c) => c.membership_id === membershipId)) return;
     const { error } = (await db
       .from("bookings")
-      .update({ cover_needed: [...list, { membership_id: membershipId }] } as never)
+      .update({
+        cover_needed: [
+          ...list,
+          otherBookingId ? { membership_id: membershipId, other_booking_id: otherBookingId } : { membership_id: membershipId },
+        ],
+      } as never)
       .eq("id", bookingId)) as unknown as { error: { message: string } | null };
     if (error) throw new Error(error.message);
   } catch (err) {
@@ -4029,7 +4067,10 @@ async function markNeedsCover(db: ReturnType<typeof admin>, bookingId: string, m
 /** The overlap guard's refusal, however it arrives (a thrown guard error or a returned one). */
 function isOverlapError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String((err as { message?: unknown })?.message ?? err);
-  return message.includes("23P01") || message.includes("overlapping booking");
+  // A visit after someone's last working day is refused the same way
+  // (migration 20261124010000), and handled the same: the visit is made,
+  // she isn't on it.
+  return message.includes("23P01") || message.includes("overlapping booking") || message.includes("last working day");
 }
 
 // ─────────────────────────────────────────────────────────────────

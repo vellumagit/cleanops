@@ -374,7 +374,17 @@ export function BookingForm({
     v.scheduled_at ?? defaults?.scheduled_at_local ?? "",
   );
 
-  const currentStatus = v.status ?? defaults?.status ?? "confirmed";
+  // React resets the form after every action, and a <select> goes back to
+  // the option it was FIRST rendered with: a changed defaultValue is not
+  // applied to one already on the page, and a controlled value is not put
+  // back after the reset. So after a question ("off that day", "already
+  // booked then") the client went blank and a Pending visit read Confirmed
+  // again, and answering it saved with no client, or quietly as Confirmed.
+  // The client and status selects are remounted on each answer (answerNo,
+  // below), starting from what was posted.
+  const [currentStatus, setCurrentStatus] = useState<string>(
+    v.status ?? defaults?.status ?? "confirmed",
+  );
 
   /*
    * Which statuses this job can hold, given when it happens.
@@ -447,12 +457,22 @@ export function BookingForm({
     const props = preset?.properties ?? [];
     return props.length === 1 ? props[0].id : "";
   });
-  // The client select stays uncontrolled (it has a defaultValue and a lot of
-  // prefill behaviour hanging off it); this mirrors the choice so the property
-  // picker knows whose properties to offer.
+  // The client picked (see currentStatus above for why it is kept here),
+  // and whose properties the property picker offers.
   const [selectedClientId, setSelectedClientId] = useState<string>(
     defaults?.client_id ?? "",
   );
+  // Each answer from the server puts back what was posted (React's own
+  // reset would not, for these two).
+  const [answered, setAnswered] = useState(state);
+  const [answerNo, setAnswerNo] = useState(0);
+  if (answered !== state) {
+    setAnswered(state);
+    setAnswerNo((n) => n + 1);
+    const back = state.values as { status?: string; client_id?: string } | undefined;
+    if (back?.status) setCurrentStatus(back.status);
+    if (back?.client_id !== undefined) setSelectedClientId(back.client_id);
+  }
   const selectedClientProperties =
     clients.find((c) => c.id === selectedClientId)?.properties ?? [];
   const [totalValue, setTotalValue] = useState<string>(
@@ -578,6 +598,22 @@ export function BookingForm({
   const notifyDecidedRef = useRef(false);
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
 
+  // ── Book anyway ──────────────────────────────────────────────────────
+  // A save refused because someone on the crew is already on another job
+  // then comes back, for an owner or admin, with a key naming those
+  // clashes. "Book anyway" posts it; a plain Save does not, so keeping an
+  // overlap is always a press of its own (actions.ts, approvedClashes).
+  const overlapKey = (state.values as { confirm_overlap?: string } | undefined)?.confirm_overlap ?? "";
+  const overlapInputRef = useRef<HTMLInputElement>(null);
+  function bookAnyway() {
+    if (overlapInputRef.current) overlapInputRef.current.value = overlapKey;
+    formRef.current?.requestSubmit();
+  }
+  useEffect(() => {
+    // Each answer from the server re-arms it: only the press posts the key.
+    if (overlapInputRef.current) overlapInputRef.current.value = "";
+  }, [state]);
+
   const timeChanged =
     mode === "edit" &&
     Boolean(defaults?.scheduled_at_local) &&
@@ -701,7 +737,23 @@ export function BookingForm({
       )}
       <div ref={formErrorRef}>
         <FormError message={state.errors?._form} />
+        {overlapKey && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={bookAnyway}
+              data-testid="book-anyway"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              Book anyway
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Saves it with the overlap. Both jobs show as double-booked until one is moved.
+            </span>
+          </div>
+        )}
       </div>
+      <input ref={overlapInputRef} type="hidden" name="confirm_overlap" defaultValue="" />
       {/* Set by a save that came back asking "they're off that day, book
           anyway?". Posting it back is the yes. */}
       <input
@@ -792,7 +844,8 @@ export function BookingForm({
             id="client_id"
             name="client_id"
             required
-            defaultValue={v.client_id ?? defaults?.client_id ?? ""}
+            key={`client-${answerNo}`}
+            defaultValue={selectedClientId}
             onChange={(e) => handleClientChange(e.target.value)}
           >
             <option value="">Select a client…</option>
@@ -1116,7 +1169,13 @@ export function BookingForm({
                 : undefined
             }
           >
-            <FormSelect id="status" name="status" defaultValue={currentStatus}>
+            <FormSelect
+              key={`status-${answerNo}`}
+              id="status"
+              name="status"
+              defaultValue={currentStatus}
+              onChange={(e) => setCurrentStatus(e.target.value)}
+            >
               {statusOptions.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -1569,6 +1628,15 @@ export function BookingForm({
           >
             Cancel
           </Link>
+        )}
+        {overlapKey && (
+          <button
+            type="button"
+            onClick={bookAnyway}
+            className={buttonVariants({ variant: "outline" })}
+          >
+            Book anyway
+          </button>
         )}
         <SubmitButton
           pendingLabel={isRecurring ? "Creating…" : "Saving…"}

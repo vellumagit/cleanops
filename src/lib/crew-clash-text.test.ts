@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { clashMessage, isDoubleBookingError, proposedWindows, type CrewClash, type ProposedVisit } from "./crew-clash-text";
+import {
+  alsoBookedSentence,
+  clashKey,
+  clashMessage,
+  isDoubleBookingError,
+  proposedWindows,
+  type CrewClash,
+  type ProposedVisit,
+} from "./crew-clash-text";
 
 const visit = (over: Partial<ProposedVisit> = {}): ProposedVisit => ({
   bookingId: "b1",
@@ -124,5 +132,37 @@ describe("isDoubleBookingError", () => {
     expect(isDoubleBookingError({ message: "A cleaner already has an overlapping booking" })).toBe(true);
     expect(isDoubleBookingError({ code: "23505", message: "duplicate key" })).toBe(false);
     expect(isDoubleBookingError(null)).toBe(false);
+  });
+});
+
+describe("Book anyway", () => {
+  const tz = "America/Regina";
+
+  it("an owner saving one visit is told the button is there; a series never is", () => {
+    const one = clashMessage([clash({})], { tz, visitCount: 1, canBookAnyway: true });
+    expect(one).toContain("press Book anyway to keep both");
+    const many = clashMessage([clash({})], { tz, visitCount: 3, canBookAnyway: true });
+    expect(many).not.toContain("Book anyway");
+  });
+
+  it("the key names each person and job once, in a fixed order", () => {
+    const a = clash({ memberId: "m2", bookingId: "b1" });
+    const b = clash({ memberId: "m1", bookingId: "b1" });
+    expect(clashKey([a, b, a])).toBe("m1:b1,m2:b1");
+    expect(clashKey([b, a])).toBe(clashKey([a, b]));
+  });
+
+  it("the visit's page says who is on which other job", () => {
+    expect(alsoBookedSentence([], tz)).toBeNull();
+    expect(alsoBookedSentence([clash({})], tz)).toBe(
+      "Olha Musnytska is also on Nancy Whitson's job (Dec 4, 2026 · 9:00 AM) at the same time.",
+    );
+    const two = alsoBookedSentence(
+      [clash({ bookingId: "z", clientName: "Leslie Saumer", scheduledAt: "2026-12-04T20:00:00.000Z" }), clash({})],
+      tz,
+    );
+    expect(two).toBe(
+      "Olha Musnytska is also on Nancy Whitson's job (Dec 4, 2026 · 9:00 AM) and Leslie Saumer's job (Dec 4, 2026 · 2:00 PM) at the same time.",
+    );
   });
 });

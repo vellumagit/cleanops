@@ -16,6 +16,7 @@ import { parseCapabilities } from "@/lib/capabilities";
 import { DeleteEmployeeForm } from "./delete-employee-form";
 import { ForceDeleteForm } from "./force-delete-form";
 import { RecoveryLinkCard } from "./recovery-link-card";
+import { LastWorkingDayCard } from "./last-working-day-card";
 
 export const metadata = { title: "Edit employee" };
 
@@ -34,7 +35,7 @@ export default async function EditEmployeePage({
   const { data: member, error } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, capabilities, display_name, contact_email, contact_phone, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, capabilities, display_name, contact_email, contact_phone, last_working_day, profile:profiles(full_name, phone)" as never,
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
@@ -51,6 +52,7 @@ export default async function EditEmployeePage({
       display_name: string | null;
       contact_email: string | null;
       contact_phone: string | null;
+      last_working_day: string | null;
       profile: { full_name: string | null; phone: string | null } | null;
     } | null;
     error: { message: string } | null;
@@ -256,6 +258,14 @@ export default async function EditEmployeePage({
             isSelf={isSelf}
           />
         </div>
+
+        {member.status === "active" && (
+          <LastWorkingDayCard
+            memberId={member.id}
+            memberName={currentDisplayName}
+            current={member.last_working_day}
+          />
+        )}
 
         {/* Emergency password recovery — hand-deliverable reset link for
             when the employee can't reset themselves (email rate-limited,

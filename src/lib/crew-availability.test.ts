@@ -63,4 +63,12 @@ describe("pickReason", () => {
     expect(pickReason({ off: false, busy: null, hours: "x" })).toEqual({ kind: "hours", reason: "x" });
     expect(pickReason({ off: false, busy: null, hours: null })).toBeNull();
   });
+
+  it("finished by the visit's date beats everything: the save would be refused", () => {
+    expect(pickReason({ finished: "2026-12-18", off: true, busy: "On another job", hours: "x" })).toEqual({
+      kind: "off",
+      reason: "Last working day was Dec 18",
+    });
+    expect(pickReason({ finished: null, off: false, busy: null, hours: null })).toBeNull();
+  });
 });
