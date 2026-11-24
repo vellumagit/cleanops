@@ -62,6 +62,17 @@ Right after the save, a banner on the bookings list (or, from **Change crew**, a
 
 This applies to a new series, an edit with **This and all future bookings** (including one that moves the series to another day, time or frequency), and **Change crew** with **This and all future bookings**. **Make recurring** still refuses on a clash and names the dates, and so does moving a series whose crew is on their own split times. A one-off booking with a clash is refused, and an owner or admin can then press **Book anyway**.
 
+## Visits you changed by hand
+
+A visit you moved on its own (dragged on the board, or re-timed with **Just this booking**), or gave its own cleaner for one week, is remembered as changed by hand. A later save with **This and all future bookings** no longer puts it back in line with the series without a word:
+
+- **The save isn't about what you changed.** Change the price or the notes for the series, and a visit with its own cleaner keeps that cleaner. Nothing is asked.
+- **The save would override it.** Give the series a new cleaner, or move it to another day or time, and the save stops first and lists those visits: *"One later visit was changed by hand: Fri, Jan 15 (moved by hand)…"* Nothing has been saved yet. Press **Keep them as they are** and every other later visit takes the change while those stay as you set them; press **Change them too** and they follow the series like the rest.
+
+A kept visit that was moved stays on its own day and time, and the series doesn't add a second visit for that week. A kept visit with its own cleaner moves with the series and keeps the cleaner. After the save, a blue note on the bookings list names the visits that were left alone.
+
+A cleaner change is remembered only from when this was added; a visit you re-staffed before then follows the series as before. Moves have been remembered since late October.
+
 ## Pending visits when a series moves
 
 Moving a series to another day, time or frequency replaces its later visits. Each new visit takes the status of the one it replaces, in date order: a visit you had marked **Pending** comes back Pending, not Confirmed. Saving with the status changed to Pending or Confirmed and **This and all future bookings** sets every later visit to that instead.

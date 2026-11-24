@@ -18,6 +18,7 @@ import { BookingsTable, type BookingRow } from "./bookings-table";
 import { loadCoverNeeded } from "@/lib/cover-needed";
 import { coverReason, coverSummary } from "@/lib/cover-needed-text";
 import { PutOnAnywayButton } from "./put-on-anyway-button";
+import { keptSentence } from "@/lib/series-hand-set";
 
 export const metadata = { title: "Bookings" };
 
@@ -34,7 +35,7 @@ const UPCOMING_LIMIT = 500;
 export default async function BookingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string; client?: string; cover?: string; tab?: string; q?: string }>;
+  searchParams: Promise<{ archived?: string; client?: string; cover?: string; kept?: string; tab?: string; q?: string }>;
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin" || membership.role === "manager";
@@ -44,7 +45,7 @@ export default async function BookingsPage({
   // Same: the overlap warning needs to know whether a team job's hours split
   // across its crew, and that lives on the org rather than the booking.
   const dividesPromise = orgDividesCrewHours(membership.organization_id);
-  const { archived, client, cover, tab, q } = await searchParams;
+  const { archived, client, cover, kept, tab, q } = await searchParams;
   const showArchived = archived === "1";
   const clientFilter = client?.trim() || null;
   // Which rows to send. "upcoming" (the default tab, and Today) sends from the
@@ -190,6 +191,30 @@ export default async function BookingsPage({
       console.error("[bookings] could not read which visits need cover:", err);
     }
     return { needsCover, coverBanner, coverPutOn };
+  })();
+  // After a series save that left some visits as the office had set them by
+  // hand (series-hand-set.ts): say which, so they can be opened. The ids
+  // come from the address, so they are read back through this company only.
+  const keptPromise = (async (): Promise<string | null> => {
+    const ids = String(kept ?? "")
+      .split(",")
+      .filter((v) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v))
+      .slice(0, 20);
+    if (ids.length === 0) return null;
+    try {
+      const [{ data }, tzForKept] = await Promise.all([
+        supabase
+          .from("bookings")
+          .select("scheduled_at")
+          .eq("organization_id", membership.organization_id)
+          .in("id", ids) as unknown as Promise<{ data: Array<{ scheduled_at: string }> | null }>,
+        tzPromise,
+      ]);
+      return keptSentence((data ?? []).map((b) => ({ scheduledAt: b.scheduled_at })), tzForKept);
+    } catch (err) {
+      console.error("[bookings] could not read the visits a series save kept:", err);
+      return null;
+    }
   })();
 
   const { data, error } = await ((scope === "upcoming"
@@ -395,8 +420,8 @@ export default async function BookingsPage({
           .map((mid) => inactiveNames.get(mid) as string)
       : [];
 
-  const [{ needsCover, coverBanner, coverPutOn }, { count: seriesCount }, { count: pendingRequestCount }] =
-    await Promise.all([coverPromise, seriesCountPromise, pendingRequestPromise]);
+  const [{ needsCover, coverBanner, coverPutOn }, { count: seriesCount }, { count: pendingRequestCount }, keptBanner] =
+    await Promise.all([coverPromise, seriesCountPromise, pendingRequestPromise, keptPromise]);
 
   const rows: BookingRow[] = (data ?? []).map((b) => ({
     id: b.id,
@@ -504,6 +529,15 @@ export default async function BookingsPage({
       {upcomingCapped && (
         <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
           Showing the next {rows.length.toLocaleString()} upcoming visits. Later ones are on the All tab.
+        </p>
+      )}
+      {keptBanner && (
+        <p
+          role="status"
+          data-testid="kept-banner"
+          className="mb-3 rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-3 text-sm text-sky-900 dark:text-sky-200"
+        >
+          <span className="font-semibold">Series saved.</span> {keptBanner}
         </p>
       )}
       {coverBanner && (

@@ -17,6 +17,7 @@ import {
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { clashesFor, describeDoubleBooking } from "@/lib/crew-clashes";
 import { clashKey, isDoubleBookingError } from "@/lib/crew-clash-text";
+import { markCrewSetByHand } from "@/lib/hand-set-marks";
 
 export type RescheduleResult =
   /** notice: saved, but worth a second look (someone's off that day). */
@@ -309,6 +310,14 @@ export async function rescheduleBookingAction(
         : updateError.message,
       ...(described ? { bookAnyway: clashKey(described.clashes) } : {}),
     };
+  }
+
+  // A drag onto another cleaner gives this one visit a crew of its own. On
+  // a series visit that is a change made by hand, which a later "this and
+  // all future" save asks about before overriding (the function marks only
+  // a visit that belongs to a series).
+  if (plan.kind === "changed") {
+    await markCrewSetByHand(membership.organization_id, id);
   }
 
   if (kept) {

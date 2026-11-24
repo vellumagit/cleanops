@@ -614,6 +614,21 @@ export function BookingForm({
     if (overlapInputRef.current) overlapInputRef.current.value = "";
   }, [state]);
 
+  // ── Later visits changed by hand ─────────────────────────────────────
+  // A "this and all future" save that would put hand-changed visits back
+  // in line with the series comes back with a question and a key naming
+  // those visits (series-hand-set.ts). Each button posts its answer with
+  // the key; a plain Save posts neither, and is asked again.
+  const handSetKeyValue = (state.values as { series_hand_set?: string } | undefined)?.series_hand_set ?? "";
+  const handSetInputRef = useRef<HTMLInputElement>(null);
+  function answerHandSet(answer: "keep" | "replace") {
+    if (handSetInputRef.current) handSetInputRef.current.value = `${answer}|${handSetKeyValue}`;
+    formRef.current?.requestSubmit();
+  }
+  useEffect(() => {
+    if (handSetInputRef.current) handSetInputRef.current.value = "";
+  }, [state]);
+
   const timeChanged =
     mode === "edit" &&
     Boolean(defaults?.scheduled_at_local) &&
@@ -754,6 +769,30 @@ export function BookingForm({
         )}
       </div>
       <input ref={overlapInputRef} type="hidden" name="confirm_overlap" defaultValue="" />
+      {handSetKeyValue && (
+        <div className="-mt-2 flex flex-wrap items-center gap-2" data-testid="hand-set-question">
+          <button
+            type="button"
+            onClick={() => answerHandSet("keep")}
+            data-testid="hand-set-keep"
+            className={buttonVariants({ variant: "default", size: "sm" })}
+          >
+            Keep them as they are
+          </button>
+          <button
+            type="button"
+            onClick={() => answerHandSet("replace")}
+            data-testid="hand-set-replace"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            Change them too
+          </button>
+          <span className="text-xs text-muted-foreground">
+            Every other later visit takes this save either way.
+          </span>
+        </div>
+      )}
+      <input ref={handSetInputRef} type="hidden" name="series_hand_set" defaultValue="" />
       {/* Set by a save that came back asking "they're off that day, book
           anyway?". Posting it back is the yes. */}
       <input

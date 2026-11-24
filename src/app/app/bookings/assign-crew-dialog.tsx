@@ -236,6 +236,32 @@ function AssignCrewDialogBody({
 
           <input type="hidden" name="confirm_time_off" value={state.confirmTimeOff ?? ""} />
           <FormError message={state.error} />
+          {/* Later visits of the series have a crew someone gave them by
+              hand. Each button posts its answer with the key; a plain Save
+              posts neither and is asked again. */}
+          {state.handSet && (
+            <div className="flex flex-wrap items-center gap-2" data-testid="hand-set-question">
+              <Button
+                type="submit"
+                name="series_hand_set"
+                value={`keep|${state.handSet}`}
+                size="sm"
+                data-testid="hand-set-keep"
+              >
+                Keep their crew
+              </Button>
+              <Button
+                type="submit"
+                name="series_hand_set"
+                value={`replace|${state.handSet}`}
+                variant="outline"
+                size="sm"
+                data-testid="hand-set-replace"
+              >
+                Change them too
+              </Button>
+            </div>
+          )}
           {/* A double-booking the office may keep. The button posts
               the key itself, so a plain Save never keeps an overlap. */}
           {state.confirmOverlap && (

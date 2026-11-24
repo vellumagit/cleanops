@@ -93,7 +93,12 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <TooltipProvider>{children}</TooltipProvider>
-        <Toaster richColors closeButton />
+        {/* Clear of the two round buttons in the bottom-right corner of the
+            office app (quick actions and the assistant, right-5, up to 48px
+            wide). A message there used to sit half under them, and the board's
+            refusal has a Book anyway button on exactly that edge. Wide
+            screens only: on a phone messages run the full width. */}
+        <Toaster richColors closeButton offset={{ right: 84, bottom: 20 }} />
         <UpdateBeacon />
         <PublicAnalytics />
       </body>

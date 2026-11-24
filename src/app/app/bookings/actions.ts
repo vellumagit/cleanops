@@ -69,6 +69,17 @@ import { runtimeKnowsZone } from "@/lib/tz-probe";
 import { awayCrewQuestion } from "./time-off-check";
 import { resolveSeriesMove } from "@/lib/series-move";
 import { rebuiltPendingIds, seriesStatusPatch } from "@/lib/series-status";
+import {
+  handSetAtRisk,
+  handSetKey,
+  handSetQuestion,
+  keepEntries,
+  planRebuild,
+  readHandSetAnswer,
+  keptSentence,
+  type LaterVisit,
+} from "@/lib/series-hand-set";
+import { markCrewSetByHand } from "@/lib/hand-set-marks";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { redirectAfterSetup } from "@/lib/setup-return";
@@ -360,6 +371,84 @@ type ClashHandling = {
 // Everyone who may edit a booking. It was owners and admins only for a day;
 // Brian widened it on 2026-11-23: the people running the schedule are the
 // ones who need to put a visit down and sort the other job out after.
+/**
+ * The later visits of a series a "this and all future" save reaches, with
+ * the two marks that say a person changed one by hand (series-hand-set.ts).
+ * Empty on any failure: the save then behaves as it always did, which is
+ * the safe way to be wrong here.
+ */
+async function laterSeriesVisits(
+  organizationId: string,
+  seriesId: string,
+  currentId: string,
+  from: string,
+): Promise<LaterVisit[]> {
+  try {
+    const { data, error } = (await createSupabaseAdminClient()
+      .from("bookings")
+      .select("id, scheduled_at, time_set_by_hand_at, crew_set_by_hand_at" as never)
+      .eq("organization_id", organizationId)
+      .eq("series_id" as never, seriesId as never)
+      .neq("id", currentId)
+      .gte("scheduled_at", from)
+      .in("status", ["pending", "confirmed"])
+      .order("scheduled_at", { ascending: true })
+      .limit(1000)) as unknown as { data: LaterVisit[] | null; error: { message: string } | null };
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  } catch (err) {
+    console.error("[series] could not read which later visits were changed by hand:", err);
+    return [];
+  }
+}
+
+/**
+ * After a series save: the visits that now carry the series' own crew (and,
+ * after a rebuild, its own times) are no longer "changed by hand". The
+ * visit the save was made from is the series' new pattern, so it never is.
+ */
+async function clearHandSetMarks(input: {
+  organizationId: string;
+  seriesId: string;
+  currentId: string;
+  from: string;
+  keptCrewIds: string[];
+  /** The schedule was rebuilt from the current visit: its time is the series'. */
+  currentTimeIsSeries: boolean;
+}): Promise<void> {
+  try {
+    const admin = createSupabaseAdminClient();
+    let later = admin
+      .from("bookings")
+      .update({ crew_set_by_hand_at: null } as never)
+      .eq("organization_id", input.organizationId)
+      .eq("series_id" as never, input.seriesId as never)
+      .gte("scheduled_at", input.from)
+      .not("crew_set_by_hand_at" as never, "is", null);
+    for (const keptId of input.keptCrewIds.slice(0, 200)) later = later.neq("id", keptId);
+    const { error: laterErr } = await later;
+    if (laterErr) throw new Error(laterErr.message);
+    const { error: currentErr } = await admin
+      .from("bookings")
+      .update(
+        (input.currentTimeIsSeries
+          ? { crew_set_by_hand_at: null, time_set_by_hand_at: null }
+          : { crew_set_by_hand_at: null }) as never,
+      )
+      .eq("id", input.currentId)
+      .eq("organization_id", input.organizationId);
+    if (currentErr) throw new Error(currentErr.message);
+  } catch (err) {
+    console.error("[series] could not clear the changed-by-hand marks:", err);
+  }
+}
+
+const sameMembers = (a: Iterable<string>, b: Iterable<string>) => {
+  const x = new Set(a);
+  const y = new Set(b);
+  return x.size === y.size && [...x].every((m) => y.has(m));
+};
+
 const mayBookAnyway = (role: string) => role === "owner" || role === "admin" || role === "manager";
 
 /**
@@ -2205,6 +2294,32 @@ export async function updateBookingAction(
   ).trim();
   const isSeriesPropagation =
     updateScope === "this_and_future" && !!seriesId && !!seriesScheduledAt;
+  // Later visits a series save left as the office had set them by hand
+  // (series-hand-set.ts), for the banner afterwards; and whether the
+  // schedule was rebuilt from this visit, which makes its time the series'.
+  let handKept: string[] = [];
+  let seriesRebuilt = false;
+  // This visit's crew before the save, for a series visit: a "just this
+  // booking" save that changes it marks the crew as set by hand.
+  let crewBefore: Set<string> | null = null;
+  if (seriesId) {
+    const { data: onItBefore } = (await createSupabaseAdminClient()
+      .from("booking_assignees")
+      .select("membership_id")
+      .eq("booking_id", id)
+      .eq("organization_id", membership.organization_id)) as unknown as {
+      data: Array<{ membership_id: string }> | null;
+    };
+    crewBefore = new Set((onItBefore ?? []).map((r) => r.membership_id));
+    if (existing?.assigned_to) crewBefore.add(existing.assigned_to);
+  }
+  const crewAfter = new Set(
+    proposedCrewFrom(
+      updateEffectiveAssignedTo,
+      readAdditionalAssignees(formData),
+      updateSplits as SplitSegmentInput[],
+    ).map((c) => c.membershipId),
+  );
 
   // Pressed "Book anyway" on a refusal of this one visit, and the clashes
   // are still those? Then it saves with the overlap in it.
@@ -2256,6 +2371,10 @@ export async function updateBookingAction(
         entity_id: id,
         after: { booked_over_clash: clashAudit(keptClashes), via: "book_anyway" },
       });
+    }
+    // One visit of a series, given a crew of its own.
+    if (crewBefore && !sameMembers(crewBefore, crewAfter)) {
+      await markCrewSetByHand(membership.organization_id, id);
     }
   }
 
@@ -2514,6 +2633,52 @@ export async function updateBookingAction(
         if (sameRule && !visitDayMoved) updateSchedule = false;
       }
     }
+    // ── Later visits someone changed by hand ──────────────────────────
+    // A visit dragged to another day, or given its own cleaner for one
+    // week. This save would put it back in line with the series. When the
+    // save is not about what was changed (a price edit; one visit has its
+    // own cleaner) it is kept without a word. When it is, the office is
+    // asked first, and nothing has been written yet.
+    const laterVisits = await laterSeriesVisits(
+      membership.organization_id,
+      seriesId,
+      id,
+      seriesScheduledAt,
+    );
+    // This visit's own marks: a visit with its own crew, saved "this and
+    // all future", is that crew being made the series'.
+    const currentHadOwnCrew = await (async () => {
+      try {
+        const { data } = (await admin
+          .from("bookings")
+          .select("crew_set_by_hand_at" as never)
+          .eq("id", id)
+          .eq("organization_id", membership.organization_id)
+          .maybeSingle()) as unknown as { data: { crew_set_by_hand_at: string | null } | null };
+        return !!data?.crew_set_by_hand_at;
+      } catch {
+        return false;
+      }
+    })();
+    const handSave = {
+      scheduleChanges: updateSchedule,
+      crewChanges: currentHadOwnCrew || !crewBefore || !sameMembers(crewBefore, crewAfter),
+    };
+    const handRisk = handSetAtRisk(laterVisits, handSave);
+    const handAnswer = readHandSetAnswer(String(formData.get("series_hand_set") ?? ""), handRisk.ask);
+    if (handRisk.ask.length > 0 && !handAnswer) {
+      return {
+        errors: { _form: handSetQuestion(handRisk.ask, orgTz) },
+        values: {
+          ...raw,
+          series_hand_set: handSetKey(handRisk.ask),
+          // Answers already given ride along with the question.
+          confirm_time_off: String(formData.get("confirm_time_off") ?? ""),
+        },
+      };
+    }
+    const handKeep = keepEntries(laterVisits, handSave, handAnswer);
+
     let scheduleFields: Record<string, unknown> = {};
     const seriesTemplateFields = (): Record<string, unknown> => {
       const fields: Record<string, unknown> = {
@@ -2733,11 +2898,23 @@ export async function updateBookingAction(
           tz: orgTz,
         };
 
-        const occurrences = generateOccurrences(
+        const allOccurrences = generateOccurrences(
           rule,
           8,
           new Date(parsed.data.scheduled_at), // `after` — exclusive
         );
+        // Visits kept as the office set them: one that keeps its time is
+        // not written again on the new schedule, and one that keeps only
+        // its crew moves to its new slot (planRebuild).
+        const rebuildPlan = planRebuild(handKeep, laterVisits, allOccurrences);
+        const occurrences = rebuildPlan.occurrences;
+        const rebuildKeep = rebuildPlan.keep.map((k) => ({
+          id: k.id,
+          keep_time: k.time,
+          keep_crew: k.crew,
+          move_to: k.moveTo,
+        }));
+        const rebuildKeepIds = new Set(rebuildKeep.map((k) => k.id));
 
         const bookingRows = occurrences.map((scheduled_at) => ({
           client_id: parsed.data.client_id,
@@ -2781,9 +2958,9 @@ export async function updateBookingAction(
         // What the later visits are now, in date order: the rebuild below
         // deletes exactly these and writes new ones as Confirmed, and the
         // ones that were Pending must not come back Confirmed.
-        const { data: replacedBefore, error: replacedBeforeErr } = (await admin
+        const { data: replacedBeforeAll, error: replacedBeforeErr } = (await admin
           .from("bookings")
-          .select("status")
+          .select("id, status")
           .eq("organization_id", membership.organization_id)
           .eq("series_id", seriesId)
           .neq("id", id)
@@ -2791,9 +2968,11 @@ export async function updateBookingAction(
           .in("status", ["pending", "confirmed"])
           .order("scheduled_at", { ascending: true })
           .limit(1000)) as unknown as {
-          data: Array<{ status: string }> | null;
+          data: Array<{ id: string; status: string }> | null;
           error: { message: string } | null;
         };
+        // Kept visits are not replaced, so they hold no place in that line.
+        const replacedBefore = (replacedBeforeAll ?? []).filter((b) => !rebuildKeepIds.has(b.id));
         if (replacedBeforeErr) {
           return {
             errors: {
@@ -2806,8 +2985,12 @@ export async function updateBookingAction(
         // Clashes are skipped here too, not refused: the series moves, and
         // someone with another job at a new visit's time comes off that one
         // visit, which is marked (migration 20261123010000).
+        // With visits to keep, the same save through the wrapper that sets
+        // them aside while it runs (migration 20261124040000).
         const { data: replacementRows, error: regenerationErr } = await admin.rpc(
-          "update_booking_series_with_assignees_skip_clashes" as "update_booking_series_with_assignees",
+          (rebuildKeep.length > 0
+            ? "update_booking_series_keeping_hand_set"
+            : "update_booking_series_with_assignees_skip_clashes") as "update_booking_series_with_assignees",
           {
             p_organization_id: membership.organization_id,
             p_series_id: seriesId,
@@ -2820,7 +3003,8 @@ export async function updateBookingAction(
             p_replace_schedule: true,
             p_booking_rows: bookingRows,
             p_additional_assignee_ids: readAdditionalAssignees(formData),
-          },
+            ...(rebuildKeep.length > 0 ? { p_keep: rebuildKeep } : {}),
+          } as never,
         );
         if (regenerationErr) {
           const clash = isDoubleBookingError(regenerationErr)
@@ -2852,6 +3036,38 @@ export async function updateBookingAction(
         const regenRows = allReplacementRows.filter(
           (row) => row.operation === "inserted",
         );
+        seriesRebuilt = true;
+        // The visits left as the office had set them. They take a status
+        // this save set for every later visit, are told about anyone the
+        // series put on them, and their calendar entries follow.
+        const keptRows = allReplacementRows.filter((row) => row.operation === "kept");
+        handKept = keptRows.map((row) => row.id);
+        if (keptRows.length > 0) {
+          if (siblingStatus) {
+            const { error: keptStatusErr } = await admin
+              .from("bookings")
+              .update({ status: siblingStatus })
+              .eq("organization_id", membership.organization_id)
+              .in("id", handKept.slice(0, 150));
+            if (keptStatusErr) {
+              console.error("[series-reschedule] could not set the kept visits' status:", keptStatusErr.message);
+            }
+          }
+          for (const kept of keptRows) {
+            for (const assigneeId of kept.added_assignee_ids ?? []) {
+              notifyBookingAssignment(membership.organization_id, kept.id, assigneeId, {
+                clientName: regenLabels.clientName ?? "A client",
+                scheduledAt: kept.scheduled_at,
+                serviceType: parsed.data.service_type,
+                address: parsed.data.address ?? null,
+              });
+            }
+          }
+          const keptIds = [...handKept];
+          after(async () => {
+            await resyncBookingCalendarsPaced(keptIds);
+          });
+        }
         const deletedSiblings = allReplacementRows
           .filter((row) => row.operation === "deleted")
           .sort(
@@ -2870,7 +3086,7 @@ export async function updateBookingAction(
         // write: the overlap guard ignores it.
         const pendingIds = rebuiltPendingIds(
           siblingStatus,
-          (replacedBefore ?? []).map((b) => b.status),
+          replacedBefore.map((b) => b.status),
           regenRows,
         );
         for (let i = 0; i < pendingIds.length; i += 150) {
@@ -3006,8 +3222,15 @@ export async function updateBookingAction(
 
       // Clashes are skipped, not refused: someone with another job on one
       // of the dates comes off that visit, and it is marked.
+      // The schedule stays, so the only thing to keep is a visit's own
+      // crew: it takes the price, notes and the rest, and keeps its people.
+      const crewKeep = handKeep
+        .filter((k) => k.crew)
+        .map((k) => ({ id: k.id, keep_time: false, keep_crew: true, move_to: null }));
       const { data: updatedRows, error: seriesUpdateErr } = await admin.rpc(
-        "update_booking_series_with_assignees_skip_clashes" as "update_booking_series_with_assignees",
+        (crewKeep.length > 0
+          ? "update_booking_series_keeping_hand_set"
+          : "update_booking_series_with_assignees_skip_clashes") as "update_booking_series_with_assignees",
         {
           p_organization_id: membership.organization_id,
           p_series_id: seriesId,
@@ -3020,7 +3243,8 @@ export async function updateBookingAction(
           p_replace_schedule: false,
           p_booking_rows: [],
           p_additional_assignee_ids: readAdditionalAssignees(formData),
-        },
+          ...(crewKeep.length > 0 ? { p_keep: crewKeep } : {}),
+        } as never,
       );
       if (seriesUpdateErr) {
         const clash = isDoubleBookingError(seriesUpdateErr)
@@ -3048,6 +3272,12 @@ export async function updateBookingAction(
       }
       const updatedSiblings = updatedRows ?? [];
       const siblingIds = updatedSiblings.map((sibling) => sibling.id);
+      // Asked about and kept, for the banner. A crew kept without asking
+      // (the save was not about crew) is not news.
+      const askedIds = new Set(handRisk.ask.map((v) => v.id));
+      handKept = updatedSiblings
+        .filter((sibling) => sibling.operation === "kept" && askedIds.has(sibling.id))
+        .map((sibling) => sibling.id);
       if (siblingIds.length > 0) {
         after(async () => {
           await resyncBookingCalendarsPaced(siblingIds);
@@ -3080,6 +3310,17 @@ export async function updateBookingAction(
         }
       }
     }
+
+    // Every later visit that was not kept now carries the series' crew,
+    // and this visit is the series' pattern.
+    await clearHandSetMarks({
+      organizationId: membership.organization_id,
+      seriesId,
+      currentId: id,
+      from: seriesScheduledAt,
+      keptCrewIds: handKeep.filter((k) => k.crew).map((k) => k.id),
+      currentTimeIsSeries: seriesRebuilt,
+    });
 
     console.log(`[series-update] saved changes to series ${seriesId}`);
   }
@@ -3172,7 +3413,12 @@ export async function updateBookingAction(
     // such a visit alone instead of asking whether to restore the series'.
     await supabase
       .from("bookings")
-      .update({ client_reminder_sent_at: null, time_set_by_hand_at: new Date().toISOString() } as never)
+      .update({
+        client_reminder_sent_at: null,
+        // Not when the series was rebuilt from this visit: its time is then
+        // the series' own, not an exception to it.
+        time_set_by_hand_at: seriesRebuilt ? null : new Date().toISOString(),
+      } as never)
       .eq("id", id)
       .eq("organization_id", membership.organization_id);
     // Not for a booking the client has never been told about. Picking the
@@ -3248,7 +3494,12 @@ export async function updateBookingAction(
     } catch (err) {
       console.error("[bookings] could not read which visits need cover:", err);
     }
-    if (needCover > 0) redirect(`/app/bookings?cover=${seriesId}`, RedirectType.replace);
+    if (needCover > 0 || handKept.length > 0) {
+      const params = new URLSearchParams();
+      if (needCover > 0) params.set("cover", seriesId);
+      if (handKept.length > 0) params.set("kept", handKept.slice(0, 20).join(","));
+      redirect(`/app/bookings?${params.toString()}`, RedirectType.replace);
+    }
   }
 
   // Back to wherever the editor was opened from — the scheduler week, the
@@ -4385,6 +4636,10 @@ export type AssignCrewState = {
   /** Set with a double-booking refusal the office may keep; posted
    *  back by the Book anyway button as `confirm_overlap`. */
   confirmOverlap?: string;
+  /** Set with the question "later visits have their own crew: keep it, or
+   *  change them too?". Posted back as `series_hand_set`, "keep|<this>" or
+   *  "replace|<this>". */
+  handSet?: string;
 };
 
 export async function assignBookingCrewAction(
@@ -4497,7 +4752,31 @@ export async function assignBookingCrewAction(
   /** A series save: the visits where someone was left off for another job. */
   let seriesCover: CoverVisit[] = [];
   let seriesVisitCount = 0;
+  /** Later visits left with the crew the office had given them by hand. */
+  let keptOwnCrew: Array<{ scheduledAt: string }> = [];
   if (updateSeries) {
+    // Later visits with a crew of their own (set on that one visit by
+    // hand). This save is the series' crew and nothing else, so it would
+    // override every one of them: ask first, before anything is written.
+    const laterVisits = await laterSeriesVisits(membership.organization_id, seriesId, id, seriesScheduledAt);
+    const crewSave = { scheduleChanges: false, crewChanges: true };
+    const handRisk = handSetAtRisk(laterVisits, crewSave);
+    const handAnswer = readHandSetAnswer(String(formData.get("series_hand_set") ?? ""), handRisk.ask);
+    if (handRisk.ask.length > 0 && !handAnswer) {
+      const posted = String(formData.get("confirm_time_off") ?? "");
+      return {
+        error: handSetQuestion(handRisk.ask, await getOrgTimezone(membership.organization_id)),
+        handSet: handSetKey(handRisk.ask),
+        ...(posted ? { confirmTimeOff: posted } : {}),
+      };
+    }
+    const crewKeep = keepEntries(laterVisits, crewSave, handAnswer)
+      .filter((k) => k.crew)
+      .map((k) => ({ id: k.id, keep_time: false, keep_crew: true, move_to: null }));
+    keptOwnCrew = keepEntries(laterVisits, crewSave, handAnswer)
+      .filter((k) => k.crew)
+      .map((k) => ({ scheduledAt: k.scheduledAt }));
+
     const currentAssignees = await syncBookingAssignees(
       supabase,
       membership.organization_id,
@@ -4514,7 +4793,9 @@ export async function assignBookingCrewAction(
 
     const { data: updatedRows, error: seriesUpdateErr } =
       await createSupabaseAdminClient().rpc(
-        "update_booking_series_with_assignees_skip_clashes" as "update_booking_series_with_assignees",
+        (crewKeep.length > 0
+          ? "update_booking_series_keeping_hand_set"
+          : "update_booking_series_with_assignees_skip_clashes") as "update_booking_series_with_assignees",
         {
           p_organization_id: membership.organization_id,
           p_series_id: seriesId,
@@ -4534,7 +4815,8 @@ export async function assignBookingCrewAction(
           p_replace_schedule: false,
           p_booking_rows: [],
           p_additional_assignee_ids: additionalIds,
-        },
+          ...(crewKeep.length > 0 ? { p_keep: crewKeep } : {}),
+        } as never,
       );
     if (seriesUpdateErr) {
       const clash = isDoubleBookingError(seriesUpdateErr)
@@ -4552,6 +4834,16 @@ export async function assignBookingCrewAction(
     }
     const updatedSiblings = updatedRows ?? [];
     const siblingIds = updatedSiblings.map((sibling) => sibling.id);
+    // The visits that took the series' crew are no longer "set by hand",
+    // and neither is this one: its crew is the series' now.
+    await clearHandSetMarks({
+      organizationId: membership.organization_id,
+      seriesId,
+      currentId: id,
+      from: seriesScheduledAt,
+      keptCrewIds: crewKeep.map((k) => k.id),
+      currentTimeIsSeries: false,
+    });
     try {
       seriesCover = await loadCoverNeeded(membership.organization_id, { bookingIds: [id, ...siblingIds] });
       seriesVisitCount = siblingIds.length + 1;
@@ -4633,6 +4925,13 @@ export async function assignBookingCrewAction(
         entity_id: id,
         after: { booked_over_clash: clashAudit(kept), via: "book_anyway_crew" },
       });
+    }
+    // One visit of a series, given a crew of its own (the mark is only
+    // ever written on a series visit).
+    const before = new Set(previousAssigneeIds);
+    if (existing.assigned_to) before.add(existing.assigned_to);
+    if (!sameMembers(before, [primaryId, ...additionalIds].filter((m): m is string => !!m))) {
+      await markCrewSetByHand(membership.organization_id, id);
     }
   }
 
@@ -4724,7 +5023,10 @@ export async function assignBookingCrewAction(
   revalidatePath(`/app/bookings/${id}`);
   revalidatePath("/app/scheduling");
   revalidatePath("/app");
-  const notice = coverSummary(seriesCover, await getOrgTimezone(membership.organization_id), seriesVisitCount);
+  const noticeTz = await getOrgTimezone(membership.organization_id);
+  const notice = [coverSummary(seriesCover, noticeTz, seriesVisitCount), keptSentence(keptOwnCrew, noticeTz)]
+    .filter(Boolean)
+    .join(" ");
   if (!notice) return { ok: true };
   const noticeBookingIds = mayBookAnyway(membership.role) ? putOnCandidates(seriesCover) : [];
   return { ok: true, notice, ...(noticeBookingIds.length > 0 ? { noticeBookingIds } : {}) };
