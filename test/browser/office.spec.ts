@@ -106,6 +106,29 @@ describe("the office, on the recurring list", () => {
 });
 
 describe("the office, on an invoice", () => {
+  it("Delete invoice: it goes, the list opens, and nothing says it failed", async () => {
+    // Svit, 2026-11-23: six deletes, all of which worked, and each one
+    // answered "Delete failed — try again." A successful delete redirects,
+    // the redirect reaches the button as a rejection, and the button's
+    // catch read it as a failure and stopped the page moving on.
+    const c = await company(stack, "DeleteInv");
+    const invoice = await draftInvoice(c, null, 14000);
+    const owner = await openAs(stack, c.owner);
+    try {
+      await visit(stack, owner.page, `/app/invoices/${invoice}/edit`);
+      await click(owner.page, "Delete invoice");
+      await expect
+        .poll(() => one<number>(stack, "select count(*)::int from public.invoices where id = $1", [invoice]), { timeout: 20_000 })
+        .toBe(0);
+      await owner.page.waitForFunction(() => location.pathname === "/app/invoices", { timeout: 20_000 });
+      const text = await owner.page.evaluate(() => document.body.innerText);
+      expect(text).not.toContain("Delete failed");
+      await expectNoCrash(owner);
+    } finally {
+      await owner.close();
+    }
+  });
+
   it("Add discount: 10% of $140 takes $14 off, saved as its own line", async () => {
     const c = await company(stack, "Discount");
     const invoice = await draftInvoice(c, null, 14000);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { unstable_rethrow } from "next/navigation";
 import { toast } from "sonner";
 import { Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -56,7 +57,11 @@ export function DeleteInvoiceForm({
         // value instead of detonating the page.
         const res = await deleteInvoiceAction(fd);
         if (res && !res.ok) toast.error(res.error);
-      } catch {
+      } catch (err) {
+        // A delete that worked redirects, and the redirect arrives here as
+        // a rejection. Hand it back to Next: caught, it read as a failure
+        // and every successful delete said "Delete failed" (2026-11-23).
+        unstable_rethrow(err);
         toast.error("Delete failed — try again.");
       }
     });
