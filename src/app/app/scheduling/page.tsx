@@ -75,13 +75,14 @@ export default async function SchedulingPage({
 }) {
   const membership = await requireMembership();
   requireCapability(membership, "scheduling");
-  const canEdit = membership.role === "owner" || membership.role === "admin";
-  // Deliberately WIDER than canEdit, and matched to setBookingStatusAction's
-  // own gate (owner/admin/manager) — the same rule the bookings list applies
-  // to the same control. Managers reschedule nothing here, but marking a job
-  // in progress or cancelled is squarely their work, and a control that
-  // renders on one screen and not another for the same person is the role
-  // drift this codebase keeps paying for.
+  // Dragging, and booking from an empty slot: owners, admins and, since
+  // 2026-11-23, managers (rescheduleBookingAction has the same gate). They
+  // could already create and move visits from the booking form.
+  const canEdit = ["owner", "admin", "manager"].includes(membership.role);
+  // Matched to setBookingStatusAction's own gate (owner/admin/manager), the
+  // same rule the bookings list applies to the same control. Kept as its own
+  // name: it was wider than canEdit until managers could drag, and the two
+  // answer different questions.
   const canEditStatus = ["owner", "admin", "manager"].includes(membership.role);
   // Started now, awaited by the panel when it renders (coverage-panel.tsx).
   const coverageData = loadCoveragePanelData(membership.organization_id);
@@ -300,7 +301,7 @@ export default async function SchedulingPage({
       }
     >
       <div className="space-y-4">
-        {canEdit || membership.role === "manager" ? (
+        {canEdit ? (
           <CoveragePanel data={coverageData} tz={tz} />
         ) : null}
         <div className="flex flex-wrap items-center justify-between gap-3">

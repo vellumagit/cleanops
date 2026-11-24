@@ -102,8 +102,10 @@ export async function rescheduleBookingAction(
   }
 
   const { membership, supabase } = await getActionContext();
-  if (membership.role !== "owner" && membership.role !== "admin") {
-    return { ok: false, error: "Only owners and admins can reschedule" };
+  // Managers too, since 2026-11-23 (Brian): they could already move a visit
+  // from the booking form, and the board is where the schedule is run.
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Only owners, admins and managers can reschedule" };
   }
 
   const orgTz = await getOrgTimezone(membership.organization_id);
@@ -288,8 +290,8 @@ export async function rescheduleBookingAction(
     // its own sentence (the database's, which names her and the date), and
     // is never offered Book anyway.
     const overlap = isDoubleBookingError(updateError);
-    // Who is already where. Everyone who can drag is an owner or admin, so
-    // every double-booking here may be kept.
+    // Who is already where. Everyone who can drag (owner, admin, manager)
+    // may keep a double-booking, so every one here is offered Book anyway.
     const described = overlap
       ? await describeDoubleBooking(
           createSupabaseAdminClient(),

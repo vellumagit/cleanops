@@ -120,7 +120,7 @@ Changes to a job's hours or price are written into the job's timeline, with who 
 
 ## Moving a job
 
-Drag a job to a new time or person on the scheduler (owners and admins), or change it on the booking. A drag tells the client the new time (same automations and preferences as above); the booking form asks first. Either way the crew gets a push, and Google Calendar — yours and each cleaner's — moves within a minute or two. A move to a day someone marked off still goes through, with a warning naming who is off. More in [Scheduling & calendar](help:scheduling-board).
+Drag a job to a new time or person on the scheduler (owners, admins and managers), or change it on the booking. A drag tells the client the new time (same automations and preferences as above); the booking form asks first. Either way the crew gets a push, and Google Calendar — yours and each cleaner's — moves within a minute or two. A move to a day someone marked off still goes through, with a warning naming who is off. More in [Scheduling & calendar](help:scheduling-board).
 
 ## Photos
 

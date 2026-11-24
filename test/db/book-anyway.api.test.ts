@@ -337,6 +337,32 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
     expect(audit.after.via).toBe("book_anyway_board");
   });
 
+  // Dragging was for owners and admins until 2026-11-23.
+  it("the board: a manager can drag, and keep a double-booking; a cleaner can do neither", async () => {
+    const s = await setUp();
+    const id = await s.amandaVisit(15, [s.olha]);
+    const date = at(s.day, 10).slice(0, 10);
+    const drop = (as: Member, time: string, confirm?: string) =>
+      s.press(as, () =>
+        scheduling.rescheduleBookingAction(id, s.olha.membershipId, date, time, s.olha.membershipId, confirm),
+      ) as Promise<unknown> as Promise<{ ok: boolean; error?: string; bookAnyway?: string }>;
+
+    const cleaner = await drop(s.vira, "16:00");
+    expect(cleaner).toMatchObject({ ok: false, error: "Only owners, admins and managers can reschedule" });
+    expect((await s.visit(id)).at).toBe(`${date}T15:00`);
+
+    // A free slot: it just moves.
+    expect(await drop(s.manager, "16:00"), api.log()).toMatchObject({ ok: true });
+    expect((await s.visit(id)).at).toBe(`${date}T16:00`);
+
+    // Onto Leslie's 9 to 2: refused with the key, then kept.
+    const refused = await drop(s.manager, "10:00");
+    expect(refused.ok).toBe(false);
+    expect(refused.bookAnyway).toBe(`${s.olha.membershipId}:${s.busy}`);
+    expect(await drop(s.manager, "10:00", refused.bookAnyway), api.log()).toMatchObject({ ok: true });
+    expect((await s.visit(id)).at).toBe(`${date}T10:00`);
+  });
+
   it("the board: a drop onto a cleaner past her last working day says so, and offers no Book anyway", async () => {
     const s = await setUp();
     await api.sql("update public.memberships set last_working_day = $2 where id = $1", [

@@ -10,7 +10,7 @@ export const article: HelpArticle = {
   body: `
 Sollos has two calendar-shaped pages. **Scheduling** is the dispatch board: one row or column per cleaner, built for deciding who goes where and moving jobs around. **Calendar** is a plain month/week/day calendar of everything dated — bookings, invoice due dates, tasks and your Google Calendar — for seeing the shape of the month.
 
-Both are for owners, admins and managers who have the Scheduling area switched on (see [Roles & permissions](help:roles-and-permissions)). On the board, dragging jobs, and creating one from an empty slot, are for owners and admins; managers can open jobs and change their status.
+Both are for owners, admins and managers who have the Scheduling area switched on (see [Roles & permissions](help:roles-and-permissions)). All three can drag jobs on the board and create one from an empty slot.
 
 ## The dispatch board
 
@@ -86,7 +86,7 @@ Connect Google Calendar under [Settings → Integrations](/app/settings/integrat
 
 **What's the difference between Scheduling and Calendar?** Scheduling is per cleaner and lets you drag jobs between people and times. Calendar is a straight calendar of bookings, invoice due dates, tasks and Google events, with no per-cleaner lanes and no dragging.
 
-**Why can't I drag jobs on the scheduler?** Dragging, and booking from an empty slot, are for owners and admins (so the board's **Book anyway** is too; a manager gets it on the booking form and in **Change crew**). Managers can open jobs, change status and use the quick view's buttons.
+**Why can't I drag jobs on the scheduler?** Dragging, and booking from an empty slot, are for owners, admins and managers. If you can't, your role is a cleaner's, or the Scheduling area is switched off for you.
 
 **I dragged a job and the client got a message — can I stop that?** A drag sends the rescheduled notice if those automations are on and the client's preferences allow it. To move a job quietly, open it and change the time in the edit form, then choose **Save without notifying**.
 
