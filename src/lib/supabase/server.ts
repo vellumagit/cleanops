@@ -36,10 +36,11 @@ export async function createSupabaseServerClient() {
             });
           } catch {
             // The `setAll` method was called from a Server Component,
-            // which cannot write cookies. Nothing refreshes the session
-            // ahead of a render here (src/middleware.ts only sets
-            // x-pathname), so a refreshed token is saved only when a
-            // server action or route handler makes the call.
+            // which cannot write cookies. Under /app and /field,
+            // src/middleware.ts has already refreshed and saved an expired
+            // session before the render. Elsewhere (the client portal,
+            // /client) a refreshed token is saved only when a server
+            // action or route handler makes the call.
           }
         },
       },
