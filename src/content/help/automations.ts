@@ -29,6 +29,8 @@ The banner at the top of both automation pages says **Automations are on** or **
 
 The master switch doesn't touch buttons you press yourself: sending an invoice or estimate, offering a shift, requesting SMS opt-in.
 
+**Turning it back on starts fresh.** Nothing is saved up while it's off, so there's no pile of messages waiting. Reminders and schedules only look ahead, and review requests (ours and the Google one) leave alone any visit from before you switched on. What does carry over is money and housekeeping: invoice drafts that were held go out on their usual schedule, overdue reminders pick up their weekly rhythm, and past jobs are closed.
+
 ## Presets
 
 Three starting points sit on **Settings → Client messages**. Presets only ever turn things **on** — they never switch off something you enabled — and each one also turns the master switch on. The larger ones reach beyond client messages: they also switch on invoice drafting and a few team alerts.

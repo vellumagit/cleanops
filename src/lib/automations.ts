@@ -2049,13 +2049,19 @@ export async function sendBookingReviewRequests(): Promise<{
   const { resolveAutomationEnabled: reviewSwitchOn } = await import("@/lib/automation-defaults");
   const { data: reviewOrgRows } = (await db
     .from("organizations")
-    .select("id, automations_enabled, automation_settings")) as unknown as {
+    .select("id, automations_enabled, automations_resumed_at, automation_settings" as never)) as unknown as {
     data: Array<{
       id: string;
       automations_enabled: boolean | null;
+      automations_resumed_at: string | null;
       automation_settings: Record<string, { enabled?: boolean }> | null;
     }> | null;
   };
+  // Switching automations on starts fresh: a visit from before the switch
+  // (a paused demo company, a first-time setup) is never asked about.
+  const reviewResumedAt = new Map(
+    (reviewOrgRows ?? []).filter((o) => o.automations_resumed_at).map((o) => [o.id, Date.parse(o.automations_resumed_at!)]),
+  );
   const reviewOrgIds = (reviewOrgRows ?? [])
     .filter(
       (o) =>
@@ -2095,6 +2101,11 @@ export async function sendBookingReviewRequests(): Promise<{
         "booking review requests",
       )),
     );
+  }
+
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    const floor = reviewResumedAt.get(candidates[i].organization_id);
+    if (floor !== undefined && Date.parse(candidates[i].scheduled_at) < floor) candidates.splice(i, 1);
   }
 
   const considered = candidates?.length ?? 0;
@@ -2513,6 +2524,13 @@ export async function sendGbpReviewRequests(): Promise<{
     }> | null;
   };
 
+  // Switching automations on starts fresh: a visit from before the switch
+  // doesn't start the Google ask.
+  const gbpResumedAt = await automationsResumedAt(
+    db,
+    Array.from(new Set((initialCandidates ?? []).map((r) => r.organization_id))),
+  );
+
   // Dedup to one booking per client — earliest scheduled_at wins,
   // matching "their FIRST completed job" intent. PostgREST gave us
   // rows ordered arbitrarily; sort here.
@@ -2522,6 +2540,8 @@ export async function sendGbpReviewRequests(): Promise<{
   >();
   for (const row of initialCandidates ?? []) {
     if (!row.client) continue;
+    const floor = gbpResumedAt.get(row.organization_id);
+    if (floor !== undefined && Date.parse(row.scheduled_at) < floor) continue;
     const existing = byClient.get(row.client.id);
     if (
       !existing ||
@@ -2820,6 +2840,32 @@ type OrgGbpCacheEntry = {
   reminder_days: number;
   max_reminders: number;
 };
+
+/**
+ * When each company last switched automations on (organizations
+ * .automations_resumed_at, stamped by a trigger). Companies with no stamp
+ * are left out: they have no floor.
+ */
+async function automationsResumedAt(
+  db: ReturnType<typeof admin>,
+  orgIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (orgIds.length === 0) return out;
+  const { data, error } = (await db
+    .from("organizations")
+    .select("id, automations_resumed_at" as never)
+    .in("id", orgIds)) as unknown as {
+    data: Array<{ id: string; automations_resumed_at: string | null }> | null;
+    error: { message: string } | null;
+  };
+  // Not knowing must not send: a failed read stops the run.
+  if (error) throw new Error(`automations resumed-at: ${error.message}`);
+  for (const o of data ?? []) {
+    if (o.automations_resumed_at) out.set(o.id, Date.parse(o.automations_resumed_at));
+  }
+  return out;
+}
 
 async function buildOrgGbpCache(
   db: ReturnType<typeof admin>,

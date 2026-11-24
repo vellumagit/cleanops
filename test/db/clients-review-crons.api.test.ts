@@ -95,6 +95,9 @@ async function company(settings: Record<string, unknown>, opts: { contactDefault
       where id = $1`,
     [org, JSON.stringify(settings), opts.contactDefault ?? "email", opts.reviewUrl === undefined ? "https://g.page/r/review-co" : opts.reviewUrl],
   );
+  // Switched on long ago: the switch-on moment is a floor for review
+  // requests, and these companies' visits are in the past.
+  await api.sql("update public.organizations set automations_resumed_at = null where id = $1", [org]);
   return { org, owner: await addMember(api.sql, org, "owner", "Svitlana"), anna: await addMember(api.sql, org, "employee", "Anna") };
 }
 type Co = Awaited<ReturnType<typeof company>>;
@@ -165,6 +168,45 @@ describe.skipIf(!hasPostgrest)("booking review requests", { timeout: 180_000 }, 
     outbox.email.length = 0;
     await BOOKING_REVIEWS();
     expect(mailTo(weekly), "asked once").toHaveLength(0);
+  });
+
+  it("paused for two weeks, then switched back on: nobody is asked about a visit from before the switch", async () => {
+    // A demo company is paused with the master switch. Jobs keep finishing
+    // while it is off; switching it on must not write to clients about them.
+    const c = await company(ON);
+    const during = await person(c, "During Pause");
+    await api.sql("update public.organizations set automations_enabled = false where id = $1", [c.org]);
+    const old = await visit(c, during, 3 * DAY);
+    await BOOKING_REVIEWS();
+    expect(outbox.email, "off: nothing").toHaveLength(0);
+
+    // Back on, through the same column the button writes.
+    await api.sql("update public.organizations set automations_enabled = true where id = $1", [c.org]);
+    const [{ stamped }] = await api.sql<{ stamped: boolean }>(
+      "select automations_resumed_at > now() - interval '1 minute' as stamped from public.organizations where id = $1",
+      [c.org],
+    );
+    expect(stamped, "the switch-on moment is recorded").toBe(true);
+    await BOOKING_REVIEWS();
+    expect(mailTo(during), "a visit from the pause").toHaveLength(0);
+    const [{ sent }] = await api.sql<{ sent: boolean }>("select review_request_sent_at is not null as sent from public.bookings where id = $1", [old]);
+    expect(sent).toBe(false);
+
+    // Saving the switch as on again is not a new start.
+    await api.sql("update public.organizations set automations_resumed_at = now() - interval '1 day' where id = $1", [c.org]);
+    await api.sql("update public.organizations set automations_enabled = true where id = $1", [c.org]);
+    const [{ kept }] = await api.sql<{ kept: boolean }>(
+      "select automations_resumed_at < now() - interval '23 hours' as kept from public.organizations where id = $1",
+      [c.org],
+    );
+    expect(kept, "already on: the stamp stays").toBe(true);
+
+    // A visit finished after the switch is asked about as usual.
+    const after = await person(c, "After Switch");
+    await visit(c, after, 5 * 60);
+    await BOOKING_REVIEWS();
+    expect(mailTo(after)).toHaveLength(1);
+    expect(mailTo(during)).toHaveLength(0);
   });
 
   it("skips anyone who opted out, reviewed lately or follows a 'none' house default, and every company that hasn't switched it on", async () => {
@@ -251,6 +293,17 @@ describe.skipIf(!hasPostgrest)("Google review requests", { timeout: 180_000 }, (
     await GBP();
     expect(mailTo(atCap)).toHaveLength(1);
     expect((await clientRow(atCap)).gbp_reminders_sent).toBe(1);
+  });
+
+  it("switched back on after a pause: a first job from before the switch doesn't start the Google ask", async () => {
+    const c = await company(ON);
+    const during = await person(c, "Paused First Job");
+    await visit(c, during, 3 * DAY);
+    await api.sql("update public.organizations set automations_enabled = false where id = $1", [c.org]);
+    await api.sql("update public.organizations set automations_enabled = true where id = $1", [c.org]);
+    await GBP();
+    expect(mailTo(during)).toHaveLength(0);
+    expect((await clientRow(during)).gbp_review_state).toBe("never_asked");
   });
 
   it("an unsubscribe from the email, an opt-out or do-not-contact stops it; so does a company with no review link or the switch off", async () => {
