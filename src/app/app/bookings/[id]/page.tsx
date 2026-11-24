@@ -34,6 +34,7 @@ import { coverReason, leftOffSentence } from "@/lib/cover-needed-text";
 import { clashesOnVisit } from "@/lib/crew-clashes";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { alsoBookedSentence } from "@/lib/crew-clash-text";
+import { PutOnAnywayButton } from "../put-on-anyway-button";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
@@ -106,11 +107,17 @@ export default async function BookingDetailPage({
   // crew is on another job at the same time. Read beside the cover mark, on
   // its own, so the page never depends on it.
   let needsCover: string | null = null;
+  // Left off for another job (not a last working day): the names an owner
+  // or admin may put on anyway.
+  let coverPutOn: string[] = [];
   let doubleBooked: string | null = null;
   await Promise.all([
     loadCoverNeeded(membership.organization_id, { bookingIds: [id] })
       .then(([marked]) => {
-        if (marked) needsCover = coverReason(marked, tz);
+        if (marked) {
+          needsCover = coverReason(marked, tz);
+          coverPutOn = marked.people.filter((p) => p.finishedOn == null).map((p) => p.name);
+        }
       })
       .catch((err) => console.error("[booking] could not read whether this visit needs cover:", err)),
     clashesOnVisit(createSupabaseAdminClient(), membership.organization_id, id)
@@ -579,6 +586,15 @@ export default async function BookingDetailPage({
                 <span className="font-semibold">Needs cover.</span> {leftOffSentence(needsCover)} Use{" "}
                 {booking.assigned ? "Change crew" : "Assign crew"} to
                 pick someone else; this note goes once the crew is saved.
+                {canEdit && coverPutOn.length > 0 && (
+                  <span className="mt-2 flex flex-wrap items-center gap-2">
+                    <PutOnAnywayButton
+                      bookingIds={[booking.id]}
+                      label={`Put ${coverPutOn.length === 1 ? coverPutOn[0] : "them"} on anyway`}
+                    />
+                    <span>Double-booked until you move one of the jobs.</span>
+                  </span>
+                )}
               </p>
             )}
             {bookingStatus !== "completed" &&

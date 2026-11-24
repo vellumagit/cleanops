@@ -15,12 +15,16 @@ import {
   sendBookingRescheduled,
 } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { explainDoubleBooking } from "@/lib/crew-clashes";
+import { clashesFor, describeDoubleBooking } from "@/lib/crew-clashes";
+import { clashKey, isDoubleBookingError } from "@/lib/crew-clash-text";
 
 export type RescheduleResult =
   /** notice: saved, but worth a second look (someone's off that day). */
   | { ok: true; notice?: string }
-  | { ok: false; error: string };
+  /** bookAnyway: refused for a double-booking the office may keep. Calling
+   *  again with it as `confirmOverlap` makes the move with the overlap in
+   *  it (migration 20261124030000). */
+  | { ok: false; error: string; bookAnyway?: string };
 
 /**
  * Mark a cleaner's "take me off the recurring client" request as handled.
@@ -82,6 +86,12 @@ export async function rescheduleBookingAction(
    * a team job from a non-lead's lane wiped the rest of the crew.
    */
   fromMember?: string | null,
+  /**
+   * "Book anyway": the key a refused drop came back with. The move goes
+   * through with the overlap only while the clashes are still the ones
+   * that refusal named.
+   */
+  confirmOverlap?: string,
 ): Promise<RescheduleResult> {
   if (!id) return { ok: false, error: "Missing booking id" };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
@@ -225,8 +235,41 @@ export async function rescheduleBookingAction(
   }
 
   const assigneeIds = plan.kind === "changed" ? plan.crew : null;
+  // The crew as this drag would leave it, at the slot the card was dropped
+  // on: what the clash finder reads. A split job keeps each person's own
+  // times.
+  const proposedVisit = {
+    bookingId: id,
+    scheduledAt: wall.scheduled_at,
+    durationMinutes: current.duration_minutes,
+    // The database timed each person by this; so must the lookup.
+    divideHoursEvenly: current.divide_hours_evenly ?? null,
+    crew:
+      plan.kind === "changed"
+        ? plan.crew.map((membershipId) => ({ membershipId }))
+        : crewNow.map((membershipId) => {
+            const row = (crewRows ?? []).find((r) => r.membership_id === membershipId);
+            return {
+              membershipId,
+              startOffsetMinutes: row?.split_start_offset_minutes ?? null,
+              durationMinutes: row?.split_duration_minutes ?? null,
+            };
+          }),
+  };
+  // Book anyway pressed on a refusal, and the clashes are still those?
+  let kept: Awaited<ReturnType<typeof clashesFor>> | null = null;
+  if (confirmOverlap) {
+    try {
+      const clashes = await clashesFor(createSupabaseAdminClient(), membership.organization_id, [proposedVisit]);
+      if (clashes.length > 0 && clashKey(clashes) === confirmOverlap) kept = clashes;
+    } catch (err) {
+      console.error("[reschedule] could not re-check the clashes for Book anyway:", err);
+    }
+  }
   const { error: updateError } = await createSupabaseAdminClient().rpc(
-    "reschedule_booking_with_assignees",
+    (kept
+      ? "reschedule_booking_with_assignees_allow_clashes"
+      : "reschedule_booking_with_assignees") as "reschedule_booking_with_assignees",
     {
       p_organization_id: membership.organization_id,
       p_booking_id: id,
@@ -241,39 +284,49 @@ export async function rescheduleBookingAction(
     },
   );
   if (updateError) {
-    const overlap = updateError.code === "23P01" || updateError.message.includes("overlapping booking");
-    // Who is already where: the crew as this drag would leave it, at the
-    // slot the card was dropped on. A split job keeps each person's own
-    // times.
-    const clash = overlap
-      ? await explainDoubleBooking(createSupabaseAdminClient(), membership.organization_id, [
-          {
-            bookingId: id,
-            scheduledAt: wall.scheduled_at,
-            durationMinutes: current.duration_minutes,
-            // The database timed each person by this; so must the lookup.
-            divideHoursEvenly: current.divide_hours_evenly ?? null,
-            crew:
-              plan.kind === "changed"
-                ? plan.crew.map((membershipId) => ({ membershipId }))
-                : crewNow.map((membershipId) => {
-                    const row = (crewRows ?? []).find((r) => r.membership_id === membershipId);
-                    return {
-                      membershipId,
-                      startOffsetMinutes: row?.split_start_offset_minutes ?? null,
-                      durationMinutes: row?.split_duration_minutes ?? null,
-                    };
-                  }),
-          },
-        ])
+    // Not "past her last working day": that refusal shares the code, has
+    // its own sentence (the database's, which names her and the date), and
+    // is never offered Book anyway.
+    const overlap = isDoubleBookingError(updateError);
+    // Who is already where. Everyone who can drag is an owner or admin, so
+    // every double-booking here may be kept.
+    const described = overlap
+      ? await describeDoubleBooking(
+          createSupabaseAdminClient(),
+          membership.organization_id,
+          [proposedVisit],
+          [],
+          { canBookAnyway: true },
+        )
       : null;
     return {
       ok: false,
       error: overlap
-        ? (clash ??
+        ? (described?.message ??
           "A cleaner on this job is already booked at that time. Move the other job first or pick a different slot.")
         : updateError.message,
+      ...(described ? { bookAnyway: clashKey(described.clashes) } : {}),
     };
+  }
+
+  if (kept) {
+    const { logAuditEvent } = await import("@/lib/audit");
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "booking",
+      entity_id: id,
+      after: {
+        via: "book_anyway_board",
+        booked_over_clash: kept.map((c) => ({
+          membership_id: c.memberId,
+          name: c.memberName,
+          other_booking_id: c.bookingId,
+          other_client: c.clientName,
+          other_scheduled_at: c.scheduledAt,
+        })),
+      },
+    });
   }
 
   // Rescheduled notices — drag-drop is the highest-traffic reschedule path

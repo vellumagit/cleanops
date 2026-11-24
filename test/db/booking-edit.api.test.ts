@@ -233,6 +233,33 @@ describe.skipIf(!hasPostgrest)("the booking edit form on a weekly series", () =>
     expect(rows.slice(1).map((r) => r.status)).toEqual(rows.slice(1).map(() => "pending"));
   });
 
+  it("this and all future, moved to Wednesday with the status untouched: later Pending visits come back Pending", async () => {
+    // Moving a series deletes the later visits and writes new ones, and the
+    // new ones were written Confirmed: every visit pencilled in as Pending
+    // read Confirmed after the move.
+    const s = await weeklySeries();
+    await api.sql("update public.bookings set status = 'pending' where id = any($1::uuid[])", [[s.visits[2], s.visits[3]]]);
+    const wednesday = ymd(s.base + 7 * DAY - DAY);
+    const res = await save(
+      s.owner,
+      s.visits[1],
+      editForm(s, 1, { scheduled_at: `${wednesday}T09:00`, update_scope: "this_and_future", ...sameSchedule(s, 1) }),
+    );
+    expect(res, api.log()).toMatch(/^redirected to /);
+    const rows = await api.sql<{ id: string; status: string; dow: number }>(
+      `select id, status, extract(dow from scheduled_at at time zone 'UTC')::int as dow
+         from public.bookings where series_id = $1 and status <> 'cancelled' order by scheduled_at`,
+      [s.series],
+    );
+    expect(rows.slice(1).every((r) => r.dow === 3), "moved to Wednesdays").toBe(true);
+    expect(rows.slice(2).some((r) => !s.visits.includes(r.id)), "the later visits were rebuilt").toBe(true);
+    // Was: confirmed, confirmed, pending, pending. The edited visit and the
+    // first one keep Confirmed; everything from the third on is Pending.
+    expect(rows.slice(0, 2).map((r) => r.status)).toEqual(["confirmed", "confirmed"]);
+    expect(rows.slice(2).map((r) => r.status)).toEqual(rows.slice(2).map(() => "pending"));
+    expect(rows.length).toBeGreaterThanOrEqual(4);
+  });
+
   it("this and all future with the schedule section shown but untouched: nothing is rebuilt", async () => {
     // The form pre-fills "starts" with this visit's date. Read as a new
     // schedule, that once rebuilt every later visit on a price-only save.

@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
+import { showRefusedDrop } from "./refused-drop";
 import { orderCrewByWorkload } from "./crew-order";
 import type {
   AvailabilityByEmployee,
@@ -237,22 +238,25 @@ export function DispatchGrid({
       return;
     }
 
-    startTransition(async () => {
-      const result = await rescheduleBookingAction(
-        bookingId,
-        target.employeeId,
-        date,
-        target.time,
-        fromMember,
-      );
-      if (result.ok) {
-        if (result.notice) toast.warning(result.notice);
-        else toast.success("Rescheduled");
-        router.refresh();
-      } else {
-        toast.error(result.error);
-      }
-    });
+    const drop = (confirmOverlap?: string) =>
+      startTransition(async () => {
+        const result = await rescheduleBookingAction(
+          bookingId,
+          target.employeeId,
+          date,
+          target.time,
+          fromMember,
+          confirmOverlap,
+        );
+        if (result.ok) {
+          if (result.notice) toast.warning(result.notice);
+          else toast.success(confirmOverlap ? "Rescheduled, double-booked" : "Rescheduled");
+          router.refresh();
+        } else {
+          showRefusedDrop(result, drop);
+        }
+      });
+    drop();
   }
 
   function handleSlotClick(employeeId: string, minutesFromMidnight: number) {

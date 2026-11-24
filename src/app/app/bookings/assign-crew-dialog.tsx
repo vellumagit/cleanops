@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/submit-button";
 import { FormError } from "@/components/form-field";
 import { cn } from "@/lib/utils";
+import { PutOnAnywayButton } from "./put-on-anyway-button";
 import {
   assignBookingCrewAction,
   type AssignCrewState,
@@ -180,6 +181,15 @@ export function AssignCrewDialog({
             >
               <span className="font-semibold">Saved.</span> {state.notice}
             </p>
+            {state.noticeBookingIds && state.noticeBookingIds.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <PutOnAnywayButton
+                  bookingIds={state.noticeBookingIds}
+                  onDone={() => onOpenChange(false)}
+                />
+                <span>Keeps them on those visits, double-booked, so you can move each visit yourself.</span>
+              </div>
+            )}
             <DialogFooter>
               <Button type="button" size="sm" onClick={() => onOpenChange(false)}>
                 Done
@@ -203,6 +213,25 @@ export function AssignCrewDialog({
 
           <input type="hidden" name="confirm_time_off" value={state.confirmTimeOff ?? ""} />
           <FormError message={state.error} />
+          {/* A double-booking an owner or admin may keep. The button posts
+              the key itself, so a plain Save never keeps an overlap. */}
+          {state.confirmOverlap && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="submit"
+                name="confirm_overlap"
+                value={state.confirmOverlap}
+                variant="outline"
+                size="sm"
+                data-testid="book-anyway"
+              >
+                Book anyway
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Saves it with the overlap. Both jobs show as double-booked until one is moved.
+              </span>
+            </div>
+          )}
 
           {!confirming ? (
             <>

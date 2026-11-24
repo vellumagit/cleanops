@@ -17,6 +17,7 @@ import { jobStillOpen } from "@/lib/crew-eligibility";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 import { loadCoverNeeded } from "@/lib/cover-needed";
 import { coverReason, coverSummary } from "@/lib/cover-needed-text";
+import { PutOnAnywayButton } from "./put-on-anyway-button";
 
 export const metadata = { title: "Bookings" };
 
@@ -168,6 +169,9 @@ export default async function BookingsPage({
   const coverPromise = (async () => {
     const needsCover = new Map<string, string>();
     let coverBanner: string | null = null;
+    // Was anyone left off for another job (not a last working day)? Then
+    // an owner or admin may put them on anyway.
+    let coverPutOn = false;
     try {
       const fromIso = new Date().toISOString();
       const [all, forSeries, tzForCover] = await Promise.all([
@@ -178,11 +182,14 @@ export default async function BookingsPage({
         tzPromise,
       ]);
       for (const v of all) needsCover.set(v.bookingId, coverReason(v, tzForCover));
-      if (forSeries) coverBanner = coverSummary(forSeries, tzForCover);
+      if (forSeries) {
+        coverBanner = coverSummary(forSeries, tzForCover);
+        coverPutOn = forSeries.some((v) => v.people.some((p) => p.finishedOn == null));
+      }
     } catch (err) {
       console.error("[bookings] could not read which visits need cover:", err);
     }
-    return { needsCover, coverBanner };
+    return { needsCover, coverBanner, coverPutOn };
   })();
 
   const { data, error } = await ((scope === "upcoming"
@@ -388,7 +395,7 @@ export default async function BookingsPage({
           .map((mid) => inactiveNames.get(mid) as string)
       : [];
 
-  const [{ needsCover, coverBanner }, { count: seriesCount }, { count: pendingRequestCount }] =
+  const [{ needsCover, coverBanner, coverPutOn }, { count: seriesCount }, { count: pendingRequestCount }] =
     await Promise.all([coverPromise, seriesCountPromise, pendingRequestPromise]);
 
   const rows: BookingRow[] = (data ?? []).map((b) => ({
@@ -506,6 +513,14 @@ export default async function BookingsPage({
           className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
         >
           <span className="font-semibold">Series saved.</span> {coverBanner}
+          {coverPutOn && cover && (membership.role === "owner" || membership.role === "admin") && (
+            <span className="mt-2 flex flex-wrap items-center gap-2">
+              <PutOnAnywayButton seriesId={cover} />
+              <span className="text-xs">
+                Keeps them on those visits, double-booked, so you can move each visit yourself.
+              </span>
+            </span>
+          )}
         </p>
       )}
       <BookingsTable

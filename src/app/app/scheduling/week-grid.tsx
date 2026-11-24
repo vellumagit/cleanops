@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
+import { showRefusedDrop } from "./refused-drop";
 import type {
   AvailabilityByEmployee,
   ScheduleBooking,
@@ -239,27 +240,32 @@ export function WeekGrid({
         : target.date;
     const assignedTo = target.kind === "unassigned" ? null : target.employeeId;
 
-    startTransition(async () => {
-      const result = await rescheduleBookingAction(
-        bookingId,
-        assignedTo,
-        targetDate,
-        undefined,
-        fromMember,
-      );
-      if (result.ok) {
-        if (result.notice) toast.warning(result.notice);
-        else
-          toast.success(
-            target.kind === "unassigned"
-              ? "Moved to unassigned"
-              : "Booking rescheduled",
-          );
-        router.refresh();
-      } else {
-        toast.error(result.error);
-      }
-    });
+    const drop = (confirmOverlap?: string) =>
+      startTransition(async () => {
+        const result = await rescheduleBookingAction(
+          bookingId,
+          assignedTo,
+          targetDate,
+          undefined,
+          fromMember,
+          confirmOverlap,
+        );
+        if (result.ok) {
+          if (result.notice) toast.warning(result.notice);
+          else
+            toast.success(
+              target.kind === "unassigned"
+                ? "Moved to unassigned"
+                : confirmOverlap
+                  ? "Booking rescheduled, double-booked"
+                  : "Booking rescheduled",
+            );
+          router.refresh();
+        } else {
+          showRefusedDrop(result, drop);
+        }
+      });
+    drop();
   }
 
   const activeBooking = activeId ? (bookingById.get(activeId) ?? null) : null;

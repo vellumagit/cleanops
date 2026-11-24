@@ -33,7 +33,7 @@ A team job's card appears in every crew member's row, and Sollos knows whose car
 - Onto **Needs assignment** — that one person comes off; the job is only unassigned if nobody is left.
 - Into the row of someone already on the job — refused, because it would quietly drop a person.
 
-A move tells the client the new time (by their channel preference, if the **Booking rescheduled** automations are on), pushes the crew, and updates Google Calendar within a minute or two. A move onto a day someone has marked off still goes through, with a warning naming who is off. A drag that would double-book someone is refused with the clashing job named.
+A move tells the client the new time (by their channel preference, if the **Booking rescheduled** automations are on), pushes the crew, and updates Google Calendar within a minute or two. A move onto a day someone has marked off still goes through, with a warning naming who is off. A drag that would double-book someone is refused with the clashing job named, and the message carries a **Book anyway** button: press it to make the move with the overlap and sort the other job out afterwards. Both jobs show the double-booked dot until one moves. A drop onto someone past their last working day is refused with no such button.
 
 ### Opening a job
 

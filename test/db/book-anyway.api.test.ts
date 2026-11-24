@@ -28,12 +28,14 @@ vi.mock("next/server", async (importOriginal) => ({
 let api: Api;
 let restoreEnv: () => void;
 let bookings: typeof import("@/app/app/bookings/actions");
+let scheduling: typeof import("@/app/app/scheduling/actions");
 
 beforeAll(async () => {
   if (!hasPostgrest) return;
   api = await startApi();
   restoreEnv = api.useAsSupabase();
   bookings = await import("@/app/app/bookings/actions");
+  scheduling = await import("@/app/app/scheduling/actions");
 }, 240_000);
 
 afterAll(async () => {
@@ -123,7 +125,28 @@ async function setUp() {
          from public.bookings b where b.client_id = $1`,
       [amanda],
     );
-  return { org, owner, manager, olha, vira, busy, amanda, day, formFor, press, amandaVisits };
+  /** One of Amanda's visits, `hour`:00 for four hours, with this crew. */
+  const amandaVisit = async (hour: number, crew: Member[] = [], days = day) => {
+    const id = await addBooking(api.sql, org, amanda, { scheduledAt: at(days, hour), durationMinutes: 240, status: "confirmed" });
+    for (const [i, m] of crew.entries()) {
+      await api.sql(
+        "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary) values ($1, $2, $3, $4)",
+        [org, id, m.membershipId, i === 0],
+      );
+      if (i === 0) await api.sql("update public.bookings set assigned_to = $2 where id = $1", [id, m.membershipId]);
+    }
+    return id;
+  };
+  const visit = async (id: string) =>
+    (
+      await api.sql<{ at: string; lead: string | null; crew: string[]; cover: Array<{ membership_id: string; other_booking_id: string }> | null }>(
+        `select to_char(b.scheduled_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI') as at, b.assigned_to as lead, b.cover_needed as cover,
+                coalesce((select array_agg(ba.membership_id order by ba.membership_id) from public.booking_assignees ba where ba.booking_id = b.id), '{}') as crew
+           from public.bookings b where b.id = $1`,
+        [id],
+      )
+    )[0];
+  return { org, owner, manager, olha, vira, busy, amanda, day, formFor, press, amandaVisits, amandaVisit, visit };
 }
 
 const asked = (r: Result) => r as { errors?: Record<string, string>; values?: Record<string, string> };
@@ -273,5 +296,172 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
         ],
       ),
     ).rejects.toThrow(/last working day/);
+  });
+
+  it("is safe to run the board and series change twice", async () => {
+    const { readFileSync } = await import("node:fs");
+    await api.db.exec(readFileSync("supabase/migrations/20261124030000_book_anyway_board_and_series.sql", "utf8"));
+  });
+
+  // The busiest write in the app: Svitlana moves visits by dragging them.
+  it("the board: a drop onto a busy cleaner is refused with a key, and the same drop with it goes through", async () => {
+    const s = await setUp();
+    // Amanda at 3 PM with Olha: clear of Leslie's 9 to 2.
+    const id = await s.amandaVisit(15, [s.olha]);
+    const date = at(s.day, 10).slice(0, 10);
+    const drop = (confirm?: string) =>
+      s.press(s.owner, () =>
+        scheduling.rescheduleBookingAction(id, s.olha.membershipId, date, "10:00", s.olha.membershipId, confirm),
+      ) as Promise<unknown> as Promise<{ ok: boolean; error?: string; bookAnyway?: string }>;
+
+    const refused = await drop();
+    expect(refused.ok, api.log()).toBe(false);
+    expect(refused.error).toMatch(/Olha \d+ is already booked then: Leslie Saumer/);
+    expect(refused.error).toContain("press Book anyway");
+    expect(refused.bookAnyway).toBe(`${s.olha.membershipId}:${s.busy}`);
+    expect((await s.visit(id)).at, "the visit stayed put").toBe(`${date}T15:00`);
+
+    // A key for some other clash moves nothing.
+    const wrong = await drop(`${s.vira.membershipId}:${s.busy}`);
+    expect(wrong.ok).toBe(false);
+    expect((await s.visit(id)).at).toBe(`${date}T15:00`);
+
+    const moved = await drop(refused.bookAnyway);
+    expect(moved, api.log()).toMatchObject({ ok: true });
+    expect(await s.visit(id)).toMatchObject({ at: `${date}T10:00`, crew: [s.olha.membershipId] });
+    const [audit] = await api.sql<{ after: { via: string } }>(
+      "select after from public.audit_log where entity_id = $1 and organization_id = $2",
+      [id, s.org],
+    );
+    expect(audit.after.via).toBe("book_anyway_board");
+  });
+
+  it("the board: a drop onto a cleaner past her last working day says so, and offers no Book anyway", async () => {
+    const s = await setUp();
+    await api.sql("update public.memberships set last_working_day = $2 where id = $1", [
+      s.olha.membershipId,
+      at(s.day - 1, 9).slice(0, 10),
+    ]);
+    const id = await s.amandaVisit(15);
+    const res = (await s.press(s.owner, () =>
+      scheduling.rescheduleBookingAction(id, s.olha.membershipId, at(s.day, 10).slice(0, 10), "16:00", null),
+    )) as unknown as { ok: boolean; error?: string; bookAnyway?: string };
+    expect(res.ok).toBe(false);
+    expect(res.error, api.log()).toMatch(/last working day is /);
+    expect(res.error).not.toMatch(/already booked/);
+    expect(res.bookAnyway).toBeUndefined();
+    expect((await s.visit(id)).crew).toEqual([]);
+  });
+
+  // Where a "Needs cover" visit sends the office to pick someone.
+  it("the Change crew pop-up: refused with a key, saved with it; a manager gets neither", async () => {
+    const s = await setUp();
+    const id = await s.amandaVisit(10);
+    const assign = (as: Member, extra: Record<string, string> = {}) => {
+      const form = new FormData();
+      form.set("id", id);
+      form.set("primary_id", s.olha.membershipId);
+      for (const [k, v] of Object.entries(extra)) form.set(k, v);
+      return s.press(as, () => bookings.assignBookingCrewAction({}, form)) as Promise<unknown> as Promise<{
+        ok?: boolean;
+        error?: string;
+        confirmOverlap?: string;
+      }>;
+    };
+
+    const asManager = await assign(s.manager);
+    expect(asManager.error).toMatch(/already booked then/);
+    expect(asManager.error).not.toContain("Book anyway");
+    expect(asManager.confirmOverlap).toBeUndefined();
+
+    const refused = await assign(s.owner);
+    expect(refused.error, api.log()).toContain("press Book anyway");
+    expect(refused.confirmOverlap).toBe(`${s.olha.membershipId}:${s.busy}`);
+    expect((await s.visit(id)).crew).toEqual([]);
+
+    const forged = await assign(s.manager, { confirm_overlap: refused.confirmOverlap! });
+    expect(forged.error).toMatch(/already booked then/);
+    expect((await s.visit(id)).crew).toEqual([]);
+
+    const saved = await assign(s.owner, { confirm_overlap: refused.confirmOverlap! });
+    expect(saved, api.log()).toMatchObject({ ok: true });
+    expect(await s.visit(id)).toMatchObject({ lead: s.olha.membershipId, crew: [s.olha.membershipId] });
+  });
+
+  // Svitlana's own case: Olha on a series, busy on some of its dates. The
+  // save leaves her off those and marks them; she wanted her kept on.
+  it("a series save that left someone off: Put them on anyway puts her on those visits and clears the mark", async () => {
+    const s = await setUp();
+    const [series] = await api.sql<{ id: string }>(
+      `insert into public.booking_series (organization_id, client_id, pattern, start_time, starts_at, duration_minutes)
+       values ($1, $2, 'bi_weekly', '10:00', current_date, 240) returning id`,
+      [s.org, s.amanda],
+    );
+    // Three visits; Olha is on Leslie's job during the first.
+    const visits: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const id = await s.amandaVisit(10, [], s.day + i * 14);
+      await api.sql("update public.bookings set series_id = $2 where id = $1", [id, series.id]);
+      visits.push(id);
+    }
+    const form = new FormData();
+    form.set("id", visits[0]);
+    form.set("primary_id", s.olha.membershipId);
+    form.set("update_scope", "this_and_future");
+    form.set("series_id", series.id);
+    form.set("series_scheduled_at", at(s.day, 10));
+    const saved = (await s.press(s.owner, () => bookings.assignBookingCrewAction({}, form))) as unknown as {
+      ok?: boolean;
+      notice?: string;
+      noticeBookingIds?: string[];
+    };
+    expect(saved.ok, api.log()).toBe(true);
+    expect(saved.notice).toMatch(/is on another job on 1 of the 3 visits/);
+    expect(saved.noticeBookingIds).toEqual([visits[0]]);
+    expect(await s.visit(visits[0])).toMatchObject({ crew: [], lead: null });
+    expect(await s.visit(visits[1])).toMatchObject({ crew: [s.olha.membershipId] });
+
+    const asManager = await s.press(s.manager, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
+    expect(asManager).toMatchObject({ ok: false });
+    expect((await s.visit(visits[0])).crew).toEqual([]);
+
+    const put = await s.press(s.owner, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
+    expect(put, api.log()).toMatchObject({ ok: true, people: 1, visits: 1 });
+    expect(await s.visit(visits[0])).toMatchObject({ crew: [s.olha.membershipId], lead: s.olha.membershipId, cover: null });
+
+    // Nothing left to do: pressing again says so and changes nothing.
+    const again = await s.press(s.owner, () => bookings.putLeftOffCrewOnAction({ seriesId: series.id }));
+    expect(again).toMatchObject({ ok: false });
+
+    // And the visit can be moved afterwards like any other.
+    const moved = await s.press(s.owner, () =>
+      scheduling.rescheduleBookingAction(visits[0], s.olha.membershipId, at(s.day, 10).slice(0, 10), "15:00", s.olha.membershipId),
+    );
+    expect(moved, api.log()).toMatchObject({ ok: true });
+  });
+
+  it("Put them on anyway keeps the lead, joins a crew, and leaves a finished cleaner off and marked", async () => {
+    const s = await setUp();
+    const anna = await addMember(api.sql, s.org, "employee", "Anna");
+    // Anna leads Amanda's visit; Olha was left off for Leslie's job, Vira
+    // because it is after her last working day.
+    const id = await s.amandaVisit(10, [anna]);
+    await api.sql("update public.memberships set last_working_day = $2 where id = $1", [
+      s.vira.membershipId,
+      at(s.day - 1, 9).slice(0, 10),
+    ]);
+    const marks = [
+      { membership_id: s.olha.membershipId, other_booking_id: s.busy },
+      { membership_id: s.vira.membershipId, other_booking_id: id },
+    ];
+    await api.sql("update public.bookings set cover_needed = $2::jsonb where id = $1", [id, JSON.stringify(marks)]);
+
+    const put = await s.press(s.owner, () => bookings.putLeftOffCrewOnAction({ bookingIds: [id] }));
+    expect(put, api.log()).toMatchObject({ ok: true, people: 1, visits: 1 });
+    expect(await s.visit(id)).toMatchObject({
+      lead: anna.membershipId,
+      crew: [anna.membershipId, s.olha.membershipId].sort(),
+      cover: [marks[1]],
+    });
   });
 });

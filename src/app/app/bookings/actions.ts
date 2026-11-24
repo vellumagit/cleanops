@@ -68,7 +68,7 @@ import { wallClockColumns, wallClockForInstant } from "@/lib/scheduled-local";
 import { runtimeKnowsZone } from "@/lib/tz-probe";
 import { awayCrewQuestion } from "./time-off-check";
 import { resolveSeriesMove } from "@/lib/series-move";
-import { seriesStatusPatch } from "@/lib/series-status";
+import { rebuiltPendingIds, seriesStatusPatch } from "@/lib/series-status";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { redirectAfterSetup } from "@/lib/setup-return";
@@ -2775,6 +2775,31 @@ export async function updateBookingAction(
           };
         }
 
+        // What the later visits are now, in date order: the rebuild below
+        // deletes exactly these and writes new ones as Confirmed, and the
+        // ones that were Pending must not come back Confirmed.
+        const { data: replacedBefore, error: replacedBeforeErr } = (await admin
+          .from("bookings")
+          .select("status")
+          .eq("organization_id", membership.organization_id)
+          .eq("series_id", seriesId)
+          .neq("id", id)
+          .gte("scheduled_at", seriesScheduledAt)
+          .in("status", ["pending", "confirmed"])
+          .order("scheduled_at", { ascending: true })
+          .limit(1000)) as unknown as {
+          data: Array<{ status: string }> | null;
+          error: { message: string } | null;
+        };
+        if (replacedBeforeErr) {
+          return {
+            errors: {
+              _form: `Nothing was saved because the series' later visits could not be read: ${replacedBeforeErr.message}`,
+            },
+            values: raw,
+          };
+        }
+
         // Clashes are skipped here too, not refused: the series moves, and
         // someone with another job at a new visit's time comes off that one
         // visit, which is marked (migration 20261123010000).
@@ -2835,15 +2860,22 @@ export async function updateBookingAction(
           deletedSiblings.map((sibling) => sibling.id),
         );
 
-        // "Pending, this and all future" with a new day or time: the rebuilt
-        // visits are made Confirmed (the rebuild function's rule), so mark
-        // them Pending now. A status-only write: the overlap guard ignores it.
-        if (siblingStatus === "pending" && regenRows.length > 0) {
+        // The rebuilt visits are made Confirmed (the rebuild function's
+        // rule). Mark Pending the ones that should be: all of them when this
+        // save said "Pending, this and all future"; otherwise each one that
+        // replaces a visit that was Pending (series-status.ts). A status-only
+        // write: the overlap guard ignores it.
+        const pendingIds = rebuiltPendingIds(
+          siblingStatus,
+          (replacedBefore ?? []).map((b) => b.status),
+          regenRows,
+        );
+        for (let i = 0; i < pendingIds.length; i += 150) {
           const { error: pendingErr } = await admin
             .from("bookings")
             .update({ status: "pending" })
             .eq("organization_id", membership.organization_id)
-            .in("id", regenRows.map((row) => row.id));
+            .in("id", pendingIds.slice(i, i + 150));
           if (pendingErr) {
             console.error("[series-reschedule] could not mark rebuilt visits pending:", pendingErr.message);
           }
@@ -4344,6 +4376,12 @@ export type AssignCrewState = {
   confirmTimeOff?: string;
   /** Saved, with something to know: who was left off which visits. */
   notice?: string;
+  /** With the notice: the visits where someone was left off for another
+   *  job and may be put on anyway (putLeftOffCrewOnAction). */
+  noticeBookingIds?: string[];
+  /** Set with a double-booking refusal an owner or admin may keep; posted
+   *  back by the Book anyway button as `confirm_overlap`. */
+  confirmOverlap?: string;
 };
 
 export async function assignBookingCrewAction(
@@ -4371,7 +4409,7 @@ export async function assignBookingCrewAction(
   const { data: existing, error: existingError } = (await supabase
     .from("bookings")
     .select(
-      "assigned_to, scheduled_at, duration_minutes, service_type, address, notes, splits, client:clients ( name )",
+      "assigned_to, scheduled_at, duration_minutes, divide_hours_evenly, service_type, address, notes, splits, client:clients ( name )",
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -4379,6 +4417,7 @@ export async function assignBookingCrewAction(
       assigned_to: string | null;
       scheduled_at: string;
       duration_minutes: number;
+      divide_hours_evenly: boolean | null;
       service_type: string;
       address: string | null;
       notes: string | null;
@@ -4540,6 +4579,25 @@ export async function assignBookingCrewAction(
       }
     }
   } else {
+    // One visit: an owner or admin may keep a double-booking, as on the
+    // booking form (Book anyway). This pop-up is where a "Needs cover"
+    // visit sends them, and it refused the very person they wanted.
+    const kept = await approvedClashes(
+      membership.organization_id,
+      membership.role,
+      String(formData.get("confirm_overlap") ?? ""),
+      {
+        bookingId: id,
+        scheduledAt: existing.scheduled_at,
+        durationMinutes: existing.duration_minutes,
+        divideHoursEvenly: existing.divide_hours_evenly,
+        crew: proposedCrewFrom(primaryId, additionalIds, []),
+      },
+    );
+    const assignClash: ClashHandling = {
+      allow: !!kept,
+      canBookAnyway: mayBookAnyway(membership.role),
+    };
     const assignCrewErr = await syncBookingAssignees(
       supabase,
       membership.organization_id,
@@ -4548,8 +4606,31 @@ export async function assignBookingCrewAction(
       additionalIds,
       [], // no splits from the quick-assign crew dialog (guarded above)
       { assigned_to: primaryId },
+      false,
+      assignClash,
     );
-    if (assignCrewErr) return { error: assignCrewErr };
+    if (assignCrewErr) {
+      const ask = bookAnywayQuestion(membership.role, assignClash, formData);
+      return {
+        error: assignCrewErr,
+        ...(ask
+          ? {
+              confirmOverlap: ask.confirm_overlap,
+              // The "off that day" yes already given rides along.
+              ...(ask.confirm_time_off ? { confirmTimeOff: ask.confirm_time_off } : {}),
+            }
+          : {}),
+      };
+    }
+    if (kept) {
+      await logAuditEvent({
+        membership,
+        action: "update",
+        entity: "booking",
+        entity_id: id,
+        after: { booked_over_clash: clashAudit(kept), via: "book_anyway_crew" },
+      });
+    }
   }
 
   // Update personal calendars for all newly assigned members (and remove
@@ -4641,7 +4722,130 @@ export async function assignBookingCrewAction(
   revalidatePath("/app/scheduling");
   revalidatePath("/app");
   const notice = coverSummary(seriesCover, await getOrgTimezone(membership.organization_id), seriesVisitCount);
-  return notice ? { ok: true, notice } : { ok: true };
+  if (!notice) return { ok: true };
+  const noticeBookingIds = mayBookAnyway(membership.role) ? putOnCandidates(seriesCover) : [];
+  return { ok: true, notice, ...(noticeBookingIds.length > 0 ? { noticeBookingIds } : {}) };
+}
+
+/** The visits where someone was left off for another job (not for a last
+ *  working day): the ones "Put them on anyway" can do something about. */
+function putOnCandidates(visits: CoverVisit[]): string[] {
+  return visits.filter((v) => v.people.some((p) => p.finishedOn == null)).map((v) => v.bookingId);
+}
+
+/**
+ * "Put them on anyway": the other answer to a series save that left
+ * someone off some visits.
+ *
+ * A series' crew goes on every visit they are free for; where someone has
+ * another job, they come off that visit and it is marked "Needs cover".
+ * That is the safe answer, and not the one Svitlana wanted on 2026-11-23:
+ * Olha on a three-weekly Thursday series, with another client every second
+ * Thursday. She wanted Olha kept on the clashing visits, overlapping, and
+ * to move each one herself ("it's just going to be overlapping, and then I
+ * can just move it locally"). This puts them back: on those visits, double-
+ * booked, the mark cleared, each person told (migration 20261124030000).
+ *
+ * Owners and admins, as every Book anyway. Someone past their last working
+ * day, or no longer active, stays off and stays marked.
+ */
+export async function putLeftOffCrewOnAction(input: {
+  bookingIds?: string[];
+  seriesId?: string;
+}): Promise<{ ok: true; people: number; visits: number } | { ok: false; error: string }> {
+  const { membership } = await getActionContext();
+  if (!mayBookAnyway(membership.role)) {
+    return { ok: false, error: "Only owners and admins can book someone over another job." };
+  }
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const seriesId = input.seriesId && uuid.test(input.seriesId) ? input.seriesId : null;
+  const asked = (input.bookingIds ?? []).filter((id) => uuid.test(id)).slice(0, 500);
+  if (!seriesId && asked.length === 0) return { ok: false, error: "No visits were named." };
+
+  // Only visits of this company that are still marked, and still ahead.
+  let marked: CoverVisit[];
+  try {
+    marked = await loadCoverNeeded(
+      membership.organization_id,
+      seriesId ? { seriesId, from: new Date().toISOString() } : { bookingIds: asked },
+    );
+  } catch (err) {
+    console.error("[bookings] could not read which visits need cover:", err);
+    return { ok: false, error: "Couldn't read which visits need cover. Nothing was changed." };
+  }
+  const ids = putOnCandidates(marked);
+  if (ids.length === 0) {
+    return { ok: false, error: "Nobody on these visits was left off for another job, so there is no one to put back." };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: put, error } = (await admin.rpc("put_left_off_crew_on" as never, {
+    p_organization_id: membership.organization_id,
+    p_booking_ids: ids,
+  } as never)) as unknown as {
+    data: Array<{ booking_id: string; membership_id: string; scheduled_at: string }> | null;
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: `Couldn't put them on: ${error.message}` };
+  const rows = put ?? [];
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      error:
+        "Nobody could be put on. They may have left, be past their last working day, or the visit is on split times: open the visit to set its crew.",
+    };
+  }
+
+  const visitIds = [...new Set(rows.map((r) => r.booking_id))];
+  const { data: visits } = (await admin
+    .from("bookings")
+    .select("id, service_type, address, client:clients ( name )")
+    .eq("organization_id", membership.organization_id)
+    .in("id", visitIds.slice(0, 500))) as unknown as {
+    data: Array<{ id: string; service_type: string; address: string | null; client: { name: string | null } | null }> | null;
+  };
+  const visitById = new Map((visits ?? []).map((v) => [v.id, v]));
+  const markedById = new Map(marked.map((v) => [v.bookingId, v]));
+  for (const r of rows) {
+    const v = visitById.get(r.booking_id);
+    notifyBookingAssignment(membership.organization_id, r.booking_id, r.membership_id, {
+      clientName: v?.client?.name ?? "A client",
+      scheduledAt: r.scheduled_at,
+      serviceType: v?.service_type ?? "standard",
+      address: v?.address ?? null,
+    });
+  }
+  await Promise.all(
+    visitIds.map((bookingId) =>
+      logAuditEvent({
+        membership,
+        action: "update",
+        entity: "booking",
+        entity_id: bookingId,
+        after: {
+          via: "put_left_off_crew_on",
+          booked_over_clash: (markedById.get(bookingId)?.people ?? [])
+            .filter((p) => rows.some((r) => r.booking_id === bookingId && r.membership_id === p.membershipId))
+            .map((p) => ({
+              membership_id: p.membershipId,
+              name: p.name,
+              other_client: p.otherClient ?? null,
+              other_scheduled_at: p.otherAt ?? null,
+            })),
+        },
+      }),
+    ),
+  );
+  after(async () => {
+    await resyncBookingCalendarsPaced(visitIds);
+  });
+
+  revalidatePath("/app/bookings");
+  for (const bookingId of visitIds.slice(0, 50)) revalidatePath(`/app/bookings/${bookingId}`);
+  revalidatePath("/app/scheduling");
+  revalidatePath("/app/calendar");
+  revalidatePath("/app");
+  return { ok: true, people: new Set(rows.map((r) => r.membership_id)).size, visits: visitIds.length };
 }
 
 /**

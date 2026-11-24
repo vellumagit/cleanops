@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { seriesStatusPatch } from "./series-status";
+import { rebuiltPendingIds, seriesStatusPatch } from "./series-status";
 
 describe("seriesStatusPatch", () => {
   it("carries a change between Pending and Confirmed to the later visits", () => {
@@ -18,5 +18,35 @@ describe("seriesStatusPatch", () => {
     expect(seriesStatusPatch("completed", "confirmed")).toBeNull();
     expect(seriesStatusPatch("en_route", "confirmed")).toBeNull();
     expect(seriesStatusPatch(undefined, "pending")).toBeNull();
+  });
+});
+
+describe("rebuiltPendingIds", () => {
+  const rebuilt = [
+    { id: "c", scheduled_at: "2027-02-18T16:00:00.000Z" },
+    { id: "a", scheduled_at: "2027-01-07T16:00:00.000Z" },
+    { id: "b", scheduled_at: "2027-01-28T16:00:00.000Z" },
+  ];
+
+  it("Pending, this and all future: every rebuilt visit", () => {
+    expect(rebuiltPendingIds("pending", ["confirmed", "confirmed"], rebuilt)).toEqual(["a", "b", "c"]);
+  });
+
+  it("Confirmed, this and all future: none", () => {
+    expect(rebuiltPendingIds("confirmed", ["pending", "pending", "pending"], rebuilt)).toEqual([]);
+  });
+
+  it("no say: each takes the status of the visit it replaces, in date order", () => {
+    expect(rebuiltPendingIds(null, ["confirmed", "pending", "pending"], rebuilt)).toEqual(["b", "c"]);
+    expect(rebuiltPendingIds(null, ["confirmed", "confirmed", "confirmed"], rebuilt)).toEqual([]);
+  });
+
+  it("more new visits than old: the extra ones follow the last old visit", () => {
+    expect(rebuiltPendingIds(null, ["confirmed", "pending"], rebuilt)).toEqual(["b", "c"]);
+    expect(rebuiltPendingIds(null, ["pending", "confirmed"], rebuilt)).toEqual(["a"]);
+  });
+
+  it("nothing was replaced: nothing to carry", () => {
+    expect(rebuiltPendingIds(null, [], rebuilt)).toEqual([]);
   });
 });
