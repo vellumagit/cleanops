@@ -7,6 +7,7 @@ import { publicPrice } from "@/lib/booking-page-rules";
 import { formatCurrencyCents } from "@/lib/format";
 import { brandButtonColors } from "@/lib/readable-on";
 import { AskForm } from "./ask-form";
+import { EmbedBridge } from "./embed-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -21,25 +22,36 @@ export const dynamic = "force-dynamic";
  * company's office, are both "not found": a draft does not exist to the
  * public.
  */
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ embed?: string }> };
+
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const { slug } = await params;
+  const embed = (await searchParams).embed === "1";
   const found = await publicBookingPage(slug).catch(() => null);
   if (!found) return { title: "Page not found", robots: { index: false, follow: false } };
   return {
     title: found.page.headline ? `${found.company.name}: ${found.page.headline}` : found.company.name,
     description: found.page.intro?.slice(0, 160) ?? `Ask ${found.company.name} for a clean, or see your visits and invoices.`,
-    // A draft is nobody's business but the office's.
-    robots: found.preview ? { index: false, follow: false } : undefined,
+    // A draft is nobody's business but the office's; the copy inside a
+    // company's website is the same page, indexed once, at its own address.
+    robots: found.preview || embed ? { index: false, follow: false } : undefined,
   };
 }
 
-export default async function BookingPage({ params }: { params: Promise<{ slug: string }> }) {
+/**
+ * `?embed=1`: the same page inside the company's own website
+ * (public/embed/book.js). No full-screen background, the frame is told the
+ * page's height, and anything that leaves the booking page opens in a new
+ * tab: signing in can't happen inside someone else's website.
+ */
+export default async function BookingPage({ params, searchParams }: Props) {
   const { slug } = await params;
+  const embed = (await searchParams).embed === "1";
 
   const limit = await checkIpRateLimit("book-page", 120, 60_000);
   if (!limit.allowed) {
     return (
-      <Frame>
+      <Frame embed={embed}>
         <h1 className="text-2xl font-bold">One moment</h1>
         <p className="mt-2 text-base text-muted-foreground">That&rsquo;s a lot of visits to this page. Wait a minute and try again.</p>
       </Frame>
@@ -56,7 +68,7 @@ export default async function BookingPage({ params }: { params: Promise<{ slug: 
   const canBook = page.time_booking !== "off" && services.some(canBookTime);
 
   return (
-    <Frame>
+    <Frame embed={embed}>
       {preview && (
         <p role="status" data-testid="preview-banner" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-base text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
           <span className="font-semibold">Preview.</span> Only you and your office can see this. It isn&rsquo;t published
@@ -77,7 +89,7 @@ export default async function BookingPage({ params }: { params: Promise<{ slug: 
 
       {canBook && (
         <Link
-          href={`/book/${page.slug}/time`}
+          href={`/book/${page.slug}/time${embed ? "?embed=1" : ""}`}
           style={{ ...button, borderWidth: 1, borderStyle: "solid" }}
           className="mt-6 flex min-h-14 items-center justify-center rounded-xl px-5 text-lg font-semibold transition-opacity hover:opacity-90"
         >
@@ -98,6 +110,7 @@ export default async function BookingPage({ params }: { params: Promise<{ slug: 
         </a>
         <Link
           href="/client/login"
+          {...(embed ? { target: "_blank", rel: "noopener" } : {})}
           className="flex min-h-14 items-center justify-center rounded-xl border border-border bg-card px-5 text-lg font-semibold transition-colors hover:bg-muted"
         >
           See my cleans
@@ -159,7 +172,15 @@ export default async function BookingPage({ params }: { params: Promise<{ slug: 
   );
 }
 
-function Frame({ children }: { children: React.ReactNode }) {
+function Frame({ children, embed = false }: { children: React.ReactNode; embed?: boolean }) {
+  if (embed) {
+    return (
+      <div data-embed-root className="flex justify-center p-1">
+        <EmbedBridge />
+        <main className="h-fit w-full max-w-2xl rounded-2xl border border-border bg-card p-6 sm:p-8">{children}</main>
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-[100dvh] justify-center bg-muted/30 px-4 py-8">
       <main className="h-fit w-full max-w-2xl rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">{children}</main>

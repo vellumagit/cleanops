@@ -378,6 +378,14 @@ shown before paying.
 ### Phase 6: reach (each item separate)
 
 - A button and an embeddable version for the company's own website.
+  **BUILT 2026-11-24**: Settings, Online booking, "Put it on your website".
+  The button is a plain link in the company's colour. The embed is one
+  script tag (`public/embed/book.js`) that frames `/book/<name>?embed=1` and
+  keeps the frame as tall as the page. Any site may frame `/book/*` (as
+  Acuity and Calendly allow); everything else keeps `frame-ancestors 'none'`.
+  Left out: no floating "Book now" pop-up button; the confirmation emails
+  still link to sollos3.com, not back to the company's site; not tried in
+  Safari, Wix or Squarespace.
 - `name.sollos3.com` or the company's own domain.
 - Signed-in clients rebook with their saved address and their own price.
 - Recurring bookings by the client.

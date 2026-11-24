@@ -13,6 +13,9 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { OnlineBookingForm } from "./online-booking-form";
 import { OpenTimesForm } from "./open-times-form";
 import { OpenTimesPreview } from "./open-times-preview";
+import { WebsiteSnippets } from "./website-snippets";
+import { brandButtonColors } from "@/lib/readable-on";
+import { bookingButtonHtml, bookingEmbedHtml } from "@/lib/website-embed";
 
 export const metadata = { title: "Online booking" };
 
@@ -88,14 +91,16 @@ export default async function OnlineBookingPage({
 
   const [currency, orgRow] = await Promise.all([
     getOrgCurrency(orgId),
-    admin.from("organizations").select("slug, name").eq("id", orgId).maybeSingle() as unknown as Promise<{
-      data: { slug: string | null; name: string | null } | null;
+    admin.from("organizations").select("slug, name, brand_color").eq("id", orgId).maybeSingle() as unknown as Promise<{
+      data: { slug: string | null; name: string | null; brand_color: string | null } | null;
     }>,
   ]);
   // A starting suggestion only: the company's name, tidied. Theirs to change.
   const fromName = tidyName(orgRow.data?.name ?? "");
   const suggestion = !nameProblem(fromName) ? fromName : "";
   const site = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com").replace(/\/$/, "");
+
+  const brandButton = brandButtonColors(orgRow.data?.brand_color ?? null);
 
   return (
     <PageShell
@@ -128,6 +133,16 @@ export default async function OnlineBookingPage({
               priceMode: s.booking_page_price,
             }))}
           />
+          {page && (
+            <div className="max-w-2xl">
+              <WebsiteSnippets
+                live={page.status === "published"}
+                buttonHtml={bookingButtonHtml(site, page.slug, brandButton)}
+                embedHtml={bookingEmbedHtml(site, page.slug)}
+                button={brandButton}
+              />
+            </div>
+          )}
           {page && rules && (
             <div className="max-w-2xl space-y-5">
               <OpenTimesForm rules={rules} people={people} timeBooking={timeBooking} changeNoticeHours={changeNoticeHours} />

@@ -161,6 +161,24 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
         ],
       },
+      {
+        // A company's booking page, and the steps after it, may sit inside
+        // the company's own website (public/embed/book.js). We can't know
+        // every company's domain, so any site may frame these pages, as with
+        // Acuity or Calendly. Nothing behind a sign-in lives under /book: a
+        // draft is "not found" there (sign-in cookies aren't sent into
+        // another site's frame), and the visit and portal pages keep DENY.
+        // X-Frame-Options can't say "anyone"; browsers that read the CSP
+        // ignore it, as for the front page above.
+        source: "/book/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: csp.replace("frame-ancestors 'none'", "frame-ancestors *"),
+          },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+        ],
+      },
     ];
   },
 };

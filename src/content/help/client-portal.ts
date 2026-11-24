@@ -41,6 +41,15 @@ You have no page until you make one. Owners and admins set it up in **Settings â
 
 **Take it down** hides the page again and keeps everything you set up. Changing the **Link name** changes your link, and the old one stops working, so update it anywhere you shared it.
 
+### Putting it on your website
+
+Under **Put it on your website** on the same settings page are two things to copy into your own website. In most website builders they go in a block called "HTML", "Embed" or "Code".
+
+- **A button**: a "Book a clean" button in your colour that opens your booking page. It's only a link, so it works on every website.
+- **The whole page, on your website**: your booking page appears inside your own page, and grows to fit it. Visitors ask for a clean or book a time without leaving your site. **See my cleans** opens in a new tab, because signing in can't happen inside another website. If your website builder won't accept it, use the button.
+
+You paste either one once. Anything you change here later shows up on your website by itself. While your page is a draft, both show "not found".
+
 ### When you can be booked
 
 Below the page's own settings, **When you can be booked** sets the times your page can offer. It feeds the preview underneath, so you can check it against your calendar before you let anyone pick a time.

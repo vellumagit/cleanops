@@ -9,6 +9,7 @@ import { brandButtonColors } from "@/lib/readable-on";
 import { onSiteMinutes } from "@/lib/open-times";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
 import { TimePicker } from "./time-picker";
+import { EmbedBridge } from "../embed-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -20,27 +21,37 @@ export const dynamic = "force-dynamic";
  * one service on its page with a length. Otherwise the visitor is sent back
  * to the company's page, where they can ask for a clean.
  */
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+type Props = { params: Promise<{ slug: string }>; searchParams: Promise<{ embed?: string }> };
+
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const { slug } = await params;
+  const embed = (await searchParams).embed === "1";
   const found = await publicBookingPage(slug).catch(() => null);
   if (!found) return { title: "Page not found", robots: { index: false, follow: false } };
-  return { title: `Book a clean with ${found.company.name}`, robots: found.preview ? { index: false, follow: false } : undefined };
+  return { title: `Book a clean with ${found.company.name}`, robots: found.preview || embed ? { index: false, follow: false } : undefined };
 }
 
-export default async function BookTimePage({ params }: { params: Promise<{ slug: string }> }) {
+/** `?embed=1`: inside the company's own website, as on the page before. */
+export default async function BookTimePage({ params, searchParams }: Props) {
   const { slug } = await params;
+  const embed = (await searchParams).embed === "1";
+  const keep = embed ? "?embed=1" : "";
   const limit = await checkIpRateLimit("book-page", 120, 60_000);
   const found = limit.allowed ? await publicBookingPage(slug) : null;
   if (limit.allowed && !found) notFound();
 
   const services = found ? found.services.filter(canBookTime) : [];
-  if (found && (found.page.time_booking === "off" || services.length === 0)) redirect(`/book/${found.page.slug}`);
+  if (found && (found.page.time_booking === "off" || services.length === 0)) redirect(`/book/${found.page.slug}${keep}`);
   // How long the crew is there: a job two people share takes half the time.
   const shares = found ? await orgDividesCrewHours(found.page.organization_id) : false;
 
   return (
-    <div className="flex min-h-[100dvh] justify-center bg-muted/30 px-4 py-8">
-      <main className="h-fit w-full max-w-2xl rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
+    <div
+      {...(embed ? { "data-embed-root": "" } : {})}
+      className={embed ? "flex justify-center p-1" : "flex min-h-[100dvh] justify-center bg-muted/30 px-4 py-8"}
+    >
+      {embed && <EmbedBridge />}
+      <main className={`h-fit w-full max-w-2xl rounded-2xl border border-border bg-card p-6 sm:p-8 ${embed ? "" : "shadow-sm"}`}>
         {!found ? (
           <>
             <h1 className="text-2xl font-bold">One moment</h1>
@@ -72,7 +83,7 @@ export default async function BookTimePage({ params }: { params: Promise<{ slug:
               preview={found.preview}
             />
             <p className="mt-8 border-t border-border pt-5 text-base">
-              <Link href={`/book/${found.page.slug}`} className="font-medium underline underline-offset-4">
+              <Link href={`/book/${found.page.slug}${keep}`} className="font-medium underline underline-offset-4">
                 Back to {found.company.name}
               </Link>
               {found.company.contact_phone && (
