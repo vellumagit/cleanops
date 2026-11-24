@@ -35,9 +35,11 @@ export async function createSupabaseServerClient() {
               cookieStore.set(name, value, options);
             });
           } catch {
-            // The `setAll` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
+            // The `setAll` method was called from a Server Component,
+            // which cannot write cookies. Nothing refreshes the session
+            // ahead of a render here (src/middleware.ts only sets
+            // x-pathname), so a refreshed token is saved only when a
+            // server action or route handler makes the call.
           }
         },
       },
