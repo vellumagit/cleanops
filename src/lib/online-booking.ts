@@ -339,7 +339,7 @@ export function sendHeldTimeEmail(args: {
   service: string;
 }): void {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  const first = args.name.trim().split(/s+/)[0] || "there";
+  const first = args.name.trim().split(/\s+/)[0] || "there";
   void import("@/lib/email")
     .then(({ sendOrgEmail }) =>
       sendOrgEmail(args.organizationId, {
