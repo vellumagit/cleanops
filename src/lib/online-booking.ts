@@ -85,6 +85,8 @@ type BookInput = {
   address: string;
   /** The visitor's own words for this visit. */
   note: string;
+  /** Where it was booked: the public page, or a signed-in client's own area. */
+  via?: "page" | "client_area";
   now?: number;
 };
 
@@ -212,7 +214,7 @@ async function bookOnce(input: BookInput): Promise<BookTimeResult & { lost?: boo
   }
 
   const when = whenLabel(input.startMs, tz);
-  await afterBooking({ organizationId: orgId, bookingId: made.id, status, crew, client: input.client, when, scheduledAt, service: loaded.service, address: input.address || null });
+  await afterBooking({ organizationId: orgId, bookingId: made.id, status, crew, client: input.client, when, scheduledAt, service: loaded.service, address: input.address || null, via: input.via ?? "page" });
 
   for (const path of ["/app/bookings", "/app/calendar", "/app/scheduling", "/app", "/app/leads"]) revalidatePath(path);
   return { ok: true, bookingId: made.id, status, when, crew };
@@ -292,6 +294,7 @@ async function afterBooking(b: {
   scheduledAt: string;
   service: { name: string; minutes: number; category: string | null };
   address: string | null;
+  via: "page" | "client_area";
 }) {
   const attempt = async (what: string, work: () => Promise<unknown>) => {
     try {
@@ -300,6 +303,8 @@ async function afterBooking(b: {
       console.error(`[online-booking] ${what} failed:`, err);
     }
   };
+
+  const where = b.via === "client_area" ? "from their client account" : "on your booking page";
 
   // The office, in the app: the trace if every other message is lost.
   await attempt("office notice", async () => {
@@ -311,8 +316,8 @@ async function afterBooking(b: {
       title: b.status === "pending" ? "Online booking to confirm" : "Booked online",
       body:
         b.status === "pending"
-          ? `${b.client.name} picked ${b.when} for ${b.service.name} on your booking page. The time is held. Confirm it or decline it.`
-          : `${b.client.name} booked ${b.service.name} for ${b.when} on your booking page.`,
+          ? `${b.client.name} picked ${b.when} for ${b.service.name} ${where}. The time is held. Confirm it or decline it.`
+          : `${b.client.name} booked ${b.service.name} for ${b.when} ${where}.`,
       href: `/app/bookings/${b.bookingId}`,
     });
   });
@@ -354,4 +359,43 @@ async function afterBooking(b: {
       await convertLeadOnBooking(b.client.id);
     });
   }
+}
+
+/**
+ * "Your time is held": for a booking the office confirms each of, so nobody
+ * takes a day off work for it yet. The real confirmation goes out when the
+ * office confirms. They asked for this, so the platform's "pause client
+ * emails" doesn't apply. Best effort: the booking stands either way.
+ */
+export function sendHeldTimeEmail(args: {
+  organizationId: string;
+  to: string;
+  name: string;
+  company: string;
+  when: string;
+  service: string;
+}): void {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const first = args.name.trim().split(/s+/)[0] || "there";
+  void import("@/lib/email")
+    .then(({ sendOrgEmail }) =>
+      sendOrgEmail(args.organizationId, {
+        to: args.to,
+        toName: args.name,
+        pauseExempt: true,
+        subject: `${args.company} is holding your time`,
+        html: `<p style="font-size:16px;">Hi ${esc(first)},</p>
+<p style="font-size:16px;">${esc(args.company)} is holding <strong>${esc(args.when)}</strong> for your ${esc(args.service)}.</p>
+<p style="font-size:16px;">It isn't confirmed yet. You'll get another message as soon as ${esc(args.company)} confirms it.</p>
+<p style="color:#666;font-size:13px;">If you didn't ask for this, you can ignore this message.</p>`,
+        text: `Hi ${first},
+
+${args.company} is holding ${args.when} for your ${args.service}.
+
+It isn't confirmed yet. You'll get another message as soon as ${args.company} confirms it.
+
+If you didn't ask for this, you can ignore this message.`,
+      }),
+    )
+    .catch((err) => console.error("[online-booking] held-time email failed:", err));
 }

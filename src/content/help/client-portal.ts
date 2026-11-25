@@ -186,9 +186,17 @@ Every booking confirmation, day-before reminder, and reschedule email has a **Se
 - It stops working a week after the visit, and straight away if you archive the client.
 - Texts don't carry the link, only emails.
 
+## Book a clean (when you take bookings online)
+
+If your booking page is published and **Can a visitor pick a time?** is switched on, the **New clean** tab opens the same picker your page has: the service, the day, the time. A signed-in client isn't asked for their name, email or phone. Their address is filled in from their record, and they can add a note.
+
+The visit goes on their own client record, not a new lead, with the service's price. It's booked straight away or held for you to confirm, exactly as your page is set. You get a "Booked online" notice that says it came from their client account.
+
+A link under the picker, **Ask for a clean instead**, still opens the request form below. When booking online is off, New clean is the request form, as before.
+
 ## Ask for a clean
 
-On the **New clean** tab, the client fills in:
+On the **New clean** tab (or, when you take bookings online, from **Ask for a clean instead**), the client fills in:
 
 - **What do you need cleaned?** (required). It starts filled in with the service from their last booking.
 - **Preferred date** and **Preferred time**: **Flexible**, **Morning**, **Afternoon**, or **Evening**.

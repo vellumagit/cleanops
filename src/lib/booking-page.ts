@@ -157,3 +157,26 @@ async function isOfficeOf(organizationId: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Whether a signed-in client of this company can book a time themselves,
+ * and with what: the page must be published, picking a time switched on,
+ * and at least one service on the page with a length. The same three
+ * things the public page asks. Null when any is missing, and when the
+ * page can't be read (then the client area offers the request form, as it
+ * always did).
+ */
+export async function clientBookingOffer(
+  organizationId: string,
+  admin: Admin = createSupabaseAdminClient(),
+): Promise<{ page: BookingPage; services: PageService[] } | null> {
+  try {
+    const [page, services] = await Promise.all([bookingPageFor(organizationId, admin), pageServices(organizationId, admin)]);
+    if (!page || page.status !== "published" || page.time_booking === "off") return null;
+    const bookable = services.filter(canBookTime);
+    return bookable.length > 0 ? { page, services: bookable } : null;
+  } catch (err) {
+    console.error("[booking-page] could not read whether clients can book:", err);
+    return null;
+  }
+}

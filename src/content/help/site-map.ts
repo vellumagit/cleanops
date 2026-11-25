@@ -187,6 +187,7 @@ export const SITE_MAP: SitePage[] = [
   { path: "/client/(portal)/jobs/[id]", name: "A job (portal)", where: "Client portal → Jobs → tap a job", area: "client" },
   { path: "/client/(portal)/invoices", name: "Invoices (portal)", where: "Client portal → Invoices tab", area: "client" },
   { path: "/client/(portal)/request", name: "Request (portal)", where: "Client portal → Request tab", area: "client" },
+  { path: "/client/(portal)/book", name: "Book a clean (portal)", where: "Client portal → New clean tab, when the company takes bookings online", area: "client" },
   { path: "/client/(public)/login", name: "Client sign-in", where: "/client/login", area: "client" },
   { path: "/client/(public)/reset", name: "Client password reset", where: "Client sign-in → Forgot password", area: "client" },
   { path: "/client/(public)/claim/[token]", name: "Client portal invitation", where: "The link in a client's portal invite email", area: "client" },

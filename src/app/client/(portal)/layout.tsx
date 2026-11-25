@@ -2,6 +2,7 @@ import { LogOut } from "lucide-react";
 import { ClientTabBar } from "./tab-bar";
 import { getCurrentClient } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { clientBookingOffer } from "@/lib/booking-page";
 
 /**
  * Client portal shell. Top header with org name + logout, bottom tab
@@ -26,6 +27,9 @@ export default async function ClientLayout({
   // person. Read past RLS (a client can't read organizations) and only
   // this one field. Never worth failing the page over.
   let phone: string | null = null;
+  // Whether New clean opens the time picker or the request form. Read
+  // beside the phone; a failure means the request form, as before.
+  const canBookPromise = client ? clientBookingOffer(client.organization_id).then(Boolean) : Promise.resolve(false);
   if (client) {
     try {
       const { data } = (await createSupabaseAdminClient()
@@ -75,7 +79,7 @@ export default async function ClientLayout({
         )}
       </main>
 
-      <ClientTabBar />
+      <ClientTabBar canBook={await canBookPromise} />
     </div>
   );
 }

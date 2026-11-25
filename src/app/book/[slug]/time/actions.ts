@@ -7,10 +7,9 @@ import { checkEmailRateLimit, checkIpRateLimit, getIp } from "@/lib/rate-limit-h
 import { TURNSTILE_FIELD, verifyTurnstile } from "@/lib/turnstile";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { normalizePhone } from "@/lib/phone";
-import { sendOrgEmail } from "@/lib/email";
 import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 import { canBookTime, publicBookingPage } from "@/lib/booking-page";
-import { bookTimeOnline, publicOpenTimes, type PublicDay } from "@/lib/online-booking";
+import { bookTimeOnline, publicOpenTimes, sendHeldTimeEmail, type PublicDay } from "@/lib/online-booking";
 
 /**
  * "Book a clean" on a company's page: a visitor with no sign-in picks a
@@ -58,8 +57,6 @@ export type BookState = {
 };
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const escapeHtml = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 export async function bookTimeAction(_prev: BookState, formData: FormData): Promise<BookState> {
   enterFailClosed();
@@ -127,23 +124,9 @@ export async function bookTimeAction(_prev: BookState, formData: FormData): Prom
   });
   if (!res.ok) return res.taken ? { taken: true } : { error: res.error };
 
+  // Held, not confirmed: say so (lib/online-booking.ts).
   if (res.status === "pending") {
-    // Held, not confirmed: say so, so nobody takes a day off work for it
-    // yet. The real confirmation goes out when the office confirms. They
-    // asked for this, so the platform's "pause client emails" doesn't apply.
-    const first = name.split(/\s+/)[0];
-    const company = found.company.name;
-    sendOrgEmail(orgId, {
-      to: email,
-      toName: name,
-      pauseExempt: true,
-      subject: `${company} is holding your time`,
-      html: `<p style="font-size:16px;">Hi ${escapeHtml(first)},</p>
-<p style="font-size:16px;">${escapeHtml(company)} is holding <strong>${escapeHtml(res.when)}</strong> for your ${escapeHtml(service.name)}.</p>
-<p style="font-size:16px;">It isn't confirmed yet. You'll get another message as soon as ${escapeHtml(company)} confirms it.</p>
-<p style="color:#666;font-size:13px;">If you didn't ask for this, you can ignore this message.</p>`,
-      text: `Hi ${first},\n\n${company} is holding ${res.when} for your ${service.name}.\n\nIt isn't confirmed yet. You'll get another message as soon as ${company} confirms it.\n\nIf you didn't ask for this, you can ignore this message.`,
-    }).catch((err) => console.error("[book] held-time email failed:", err));
+    sendHeldTimeEmail({ organizationId: orgId, to: email, name, company: found.company.name, when: res.when, service: service.name });
   }
 
   return { done: { when: res.when, held: res.status === "pending" } };

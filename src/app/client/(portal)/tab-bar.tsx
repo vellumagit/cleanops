@@ -23,11 +23,14 @@ import { cn } from "@/lib/utils";
  *     status it reports, which is why TabProgress is a separate component.
  */
 
-const NAV = [
-  { href: "/client", label: "Home", icon: Home },
-  { href: "/client/jobs", label: "My cleans", icon: Briefcase },
-  { href: "/client/request", label: "New clean", icon: CalendarPlus },
-  { href: "/client/invoices", label: "Invoices", icon: Receipt },
+/** New clean: the picker where the company takes bookings, else the request form. */
+const nav = (canBook: boolean) => [
+  { href: "/client", label: "Home", icon: Home, also: [] as string[] },
+  { href: "/client/jobs", label: "My cleans", icon: Briefcase, also: [] },
+  canBook
+    ? { href: "/client/book", label: "New clean", icon: CalendarPlus, also: ["/client/request"] }
+    : { href: "/client/request", label: "New clean", icon: CalendarPlus, also: [] },
+  { href: "/client/invoices", label: "Invoices", icon: Receipt, also: [] },
 ];
 
 /** Indeterminate bar across the top of the tab that was tapped. */
@@ -44,19 +47,19 @@ function TabProgress() {
   );
 }
 
-export function ClientTabBar() {
+export function ClientTabBar({ canBook = false }: { canBook?: boolean }) {
   const pathname = usePathname();
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
       <ul className="mx-auto flex max-w-3xl">
-        {NAV.map((item) => {
+        {nav(canBook).map((item) => {
           const Icon = item.icon;
           // /client must match exactly or it lights up on every child route.
           const isActive =
             item.href === "/client"
               ? pathname === "/client"
-              : pathname.startsWith(item.href);
+              : pathname.startsWith(item.href) || item.also.some((p) => pathname.startsWith(p));
           return (
             <li key={item.href} className="flex-1">
               <Link

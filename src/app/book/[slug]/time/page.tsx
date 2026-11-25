@@ -9,6 +9,7 @@ import { brandButtonColors } from "@/lib/readable-on";
 import { onSiteMinutes } from "@/lib/open-times";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
 import { TimePicker } from "./time-picker";
+import { bookTimeAction, openTimesAction } from "./actions";
 import { EmbedBridge } from "../embed-bridge";
 
 export const dynamic = "force-dynamic";
@@ -69,6 +70,8 @@ export default async function BookTimePage({ params, searchParams }: Props) {
             <h1 className="mb-5 mt-6 text-3xl font-bold tracking-tight">Book a clean</h1>
             <TimePicker
               slug={found.page.slug}
+              loadTimes={openTimesAction.bind(null, found.page.slug)}
+              bookAction={bookTimeAction}
               companyName={found.company.name}
               phone={found.company.contact_phone}
               held={found.page.time_booking === "approve"}

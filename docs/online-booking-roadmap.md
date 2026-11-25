@@ -388,6 +388,17 @@ shown before paying.
   Safari, Wix or Squarespace.
 - `name.sollos3.com` or the company's own domain.
 - Signed-in clients rebook with their saved address and their own price.
+  **BUILT 2026-11-25** (without the own price): New clean in the client area
+  opens the page's picker when the company takes bookings (published page,
+  picking a time switched on, a service with a length), and the request form
+  otherwise. Same open times and same save as the public page
+  (`src/app/client/(portal)/book`, `clientBookingOffer` in
+  `src/lib/booking-page.ts`); the company comes from the signed-in client,
+  the visit goes on their own record, and only the address (filled in) and a
+  note are asked. The office notice says "from their client account".
+  Left out: the client's own price (the visit takes the service's price, as
+  on the public page); a client whose company has no page, or has it off,
+  still only asks.
 - Recurring bookings by the client.
 - Packages and add-ons in the picker.
 

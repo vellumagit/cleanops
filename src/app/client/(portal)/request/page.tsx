@@ -1,5 +1,7 @@
 import { requireClient } from "@/lib/client-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import Link from "next/link";
+import { clientBookingOffer } from "@/lib/booking-page";
 import { RequestForm } from "./request-form";
 
 export const metadata = { title: "Ask for a clean" };
@@ -10,7 +12,7 @@ export default async function ClientRequestPage() {
 
   // Pull the default address off the client record so we can pre-fill
   // the form. RLS lets the client read their own clients row.
-  const [{ data }, { data: lastBooking }] = await Promise.all([
+  const [{ data }, { data: lastBooking }, canBook] = await Promise.all([
     supabase
       .from("clients")
       .select("address")
@@ -30,6 +32,7 @@ export default async function ClientRequestPage() {
       .maybeSingle() as unknown as Promise<{
       data: { service_type_label: string | null; service_type: string | null } | null;
     }>,
+    clientBookingOffer(client.organization_id).then(Boolean),
   ]);
   const lastService =
     lastBooking?.service_type_label ??
@@ -46,6 +49,15 @@ export default async function ClientRequestPage() {
           it on the calendar.
         </p>
       </div>
+
+      {canBook && (
+        <p className="rounded-lg border border-border bg-card px-4 py-3 text-base">
+          <span className="font-medium">Know when you want it?</span>{" "}
+          <Link href="/client/book" className="font-medium text-primary underline underline-offset-4">
+            Pick a time yourself
+          </Link>
+        </p>
+      )}
 
       <div className="rounded-lg border border-border bg-card p-5">
         <RequestForm

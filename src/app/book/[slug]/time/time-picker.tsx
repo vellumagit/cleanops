@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { Turnstile } from "@/components/turnstile";
-import { bookTimeAction, openTimesAction, type BookState, type TimesState } from "./actions";
+import type { BookState, TimesState } from "./actions";
 
 const empty: BookState = {};
 type Service = { id: string; name: string; length: string; price: string | null };
@@ -15,9 +15,17 @@ type Picked = { at: number; label: string; day: string };
  * someone who doesn't book things online often.
  *
  * Every time shown came from the server, and the save checks it again.
+ *
+ * Two doors use it: the company's public page (a guest, who gives their
+ * name and email) and the signed-in client area (a client the company
+ * already knows, who gives only the address, filled in from their record).
+ * Each passes its own server actions; the picker only draws.
  */
 export function TimePicker({
   slug,
+  loadTimes,
+  bookAction,
+  signedIn = null,
   companyName,
   phone,
   services,
@@ -27,6 +35,12 @@ export function TimePicker({
   preview,
 }: {
   slug: string;
+  /** Open days for a service, from `from` on (a server action). */
+  loadTimes: (serviceId: string, from: string | null) => Promise<TimesState>;
+  /** The save (a server action, for useActionState). */
+  bookAction: (prev: BookState, formData: FormData) => Promise<BookState>;
+  /** A signed-in client: no name, email or phone asked; their address filled in. */
+  signedIn?: { address: string | null } | null;
   companyName: string;
   phone: string | null;
   services: Service[];
@@ -45,13 +59,13 @@ export function TimePicker({
   const [day, setDay] = useState<Day | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [loading, startLoading] = useTransition();
-  const [state, book, booking] = useActionState(bookTimeAction, empty);
+  const [state, book, booking] = useActionState(bookAction, empty);
   const [human, setHuman] = useState<string | null>(null);
   const top = useRef<HTMLDivElement>(null);
 
   function load(s: Service, from: string | null, keep: Day[]) {
     startLoading(async () => {
-      const res = await openTimesAction(slug, s.id, from);
+      const res = await loadTimes(s.id, from);
       setTimesError(res.error ?? null);
       setDays([...keep, ...res.days]);
       setNextFrom(res.nextFrom);
@@ -115,7 +129,10 @@ export function TimePicker({
           <>
             <p className="text-xl font-semibold">You&rsquo;re booked.</p>
             <p className="mt-1 text-lg">{state.done.when}</p>
-            <p className="mt-2">{companyName} will see you then. A confirmation is on its way to your email.</p>
+            <p className="mt-2">
+              {companyName} will see you then. A confirmation is on its way to your email.
+              {signedIn ? " It's in My cleans too." : ""}
+            </p>
           </>
         )}
       </div>
@@ -253,12 +270,14 @@ export function TimePicker({
           <input type="hidden" name="service_id" value={service.id} />
           <input type="hidden" name="at" value={picked.at} />
           {/* Not for people. A script that fills every field fills this one. */}
-          <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
-            <label>
-              Website
-              <input type="text" name="website" tabIndex={-1} autoComplete="off" />
-            </label>
-          </div>
+          {!signedIn && (
+            <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
+              <label>
+                Website
+                <input type="text" name="website" tabIndex={-1} autoComplete="off" />
+              </label>
+            </div>
+          )}
 
           {state.error && (
             <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-base text-destructive">
@@ -270,8 +289,18 @@ export function TimePicker({
             <label htmlFor="book-address" className={label}>
               Address of the place to clean
             </label>
-            <input id="book-address" name="address" required autoComplete="street-address" maxLength={300} className={field} />
+            <input
+              id="book-address"
+              name="address"
+              required
+              autoComplete="street-address"
+              maxLength={300}
+              defaultValue={signedIn?.address ?? undefined}
+              className={field}
+            />
           </div>
+          {!signedIn && (
+          <>
           <div className="space-y-1.5">
             <label htmlFor="book-name" className={label}>
               Your name
@@ -290,6 +319,8 @@ export function TimePicker({
             </label>
             <input id="book-phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={40} className={field} />
           </div>
+          </>
+          )}
           <div className="space-y-1.5">
             <label htmlFor="book-notes" className={label}>
               Anything we should know? <span className="font-normal text-muted-foreground">(optional)</span>
@@ -297,12 +328,12 @@ export function TimePicker({
             <textarea id="book-notes" name="notes" maxLength={1000} rows={3} className="w-full rounded-xl border border-input bg-background px-4 py-3 text-base" placeholder="Pets, parking, how to get in…" />
           </div>
 
-          {turnstileSiteKey && <Turnstile siteKey={turnstileSiteKey} onToken={setHuman} />}
+          {!signedIn && turnstileSiteKey && <Turnstile siteKey={turnstileSiteKey} onToken={setHuman} />}
           {human && <input type="hidden" name="cf-turnstile-response" value={human} />}
 
           <button
             type="submit"
-            disabled={booking || preview || (Boolean(turnstileSiteKey) && !human)}
+            disabled={booking || preview || (!signedIn && Boolean(turnstileSiteKey) && !human)}
             style={{ ...button, borderWidth: 1, borderStyle: "solid" }}
             className="flex min-h-14 w-full items-center justify-center rounded-xl px-5 text-lg font-semibold transition-opacity hover:opacity-90 disabled:opacity-60"
           >
