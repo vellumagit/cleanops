@@ -9,6 +9,7 @@
 import "server-only";
 import webpush from "web-push";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isOrgQuiet } from "@/lib/quiet-mode";
 
 const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY ?? "";
@@ -64,10 +65,12 @@ export async function sendPushToMembership(
   // check status reaches a phone that should have gone quiet.
   const { data: who } = (await db
     .from("memberships")
-    .select("status")
+    .select("status, organization_id")
     .eq("id", membershipId)
-    .maybeSingle()) as unknown as { data: { status: string } | null };
+    .maybeSingle()) as unknown as { data: { status: string; organization_id: string } | null };
   if (who && who.status !== "active") return 0;
+  // A company in quiet mode buzzes nobody (lib/quiet-mode.ts).
+  if (who && (await isOrgQuiet(who.organization_id))) return 0;
 
   const { data: subs } = await db
     .from("push_subscriptions" as never)
@@ -174,6 +177,7 @@ export async function sendPushToOrg(
   payload: PushPayload,
 ): Promise<number> {
   if (!isConfigured) return 0;
+  if (await isOrgQuiet(organizationId)) return 0;
 
   const db = createSupabaseAdminClient();
   const { data: subs } = await db

@@ -11,6 +11,7 @@ import {
   CLIENT_STAGES,
   MasterSwitchBanner,
   OtherAutomationPages,
+  QuietModeCard,
 } from "./automation-catalog";
 import {
   EMPTY_THRESHOLDS,
@@ -60,7 +61,7 @@ export default async function ClientMessagesPage() {
     admin
       .from("organizations")
       .select(
-        `automation_settings, default_contact_preference, automations_enabled, sms_enabled, ${THRESHOLD_SELECT}`,
+        `automation_settings, default_contact_preference, automations_enabled, quiet_mode, sms_enabled, ${THRESHOLD_SELECT}`,
       )
       .eq("id", membership.organization_id)
       .maybeSingle() as unknown as Promise<{
@@ -69,6 +70,7 @@ export default async function ClientMessagesPage() {
             automation_settings: Record<string, { enabled: boolean }>;
             default_contact_preference: string | null;
             automations_enabled: boolean | null;
+            quiet_mode: boolean | null;
             sms_enabled: boolean | null;
           } & ThresholdValues)
         | null;
@@ -109,6 +111,7 @@ export default async function ClientMessagesPage() {
       }
     >
       <MasterSwitchBanner masterOn={masterOn} enabledCount={enabledCount} />
+      <QuietModeCard quiet={org?.quiet_mode === true} />
       <OtherAutomationPages current="client" />
 
       {/* HOW IT WORKS — the decision chain, permanently visible. */}

@@ -3,6 +3,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
 import type { NotificationType } from "@/lib/notification-types";
 import { alertsFor, type OfficeTopic } from "@/lib/notification-topics";
+import { isOrgQuiet } from "@/lib/quiet-mode";
 
 /**
  * The ONE way to send a notification (in-app row + web push).
@@ -236,8 +237,12 @@ export async function notify(input: NotifyInput): Promise<void> {
     const db = createSupabaseAdminClient();
     const type = input.type ?? "general";
     const doInApp = input.channels?.inApp ?? true;
-    const doPush = input.channels?.push ?? true;
-    const doEmail = input.channels?.email ?? false;
+    // A company in quiet mode (lib/quiet-mode.ts) still gets the bell, and
+    // nothing else. Read once here rather than once per person below; the
+    // push and email senders check again for anyone who calls them directly.
+    const quiet = await isOrgQuiet(input.organizationId);
+    const doPush = !quiet && (input.channels?.push ?? true);
+    const doEmail = !quiet && (input.channels?.email ?? false);
     const push = {
       title: input.title,
       body: input.body,

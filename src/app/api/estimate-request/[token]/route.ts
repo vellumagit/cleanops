@@ -299,6 +299,7 @@ export async function POST(
       ? `<div class="cta-box"><div style="font-weight:700;margin-bottom:5px;">Call for instant booking:</div><a href="tel:${orgPhone}" style="font-size:20px;font-weight:800;color:#111827;text-decoration:none;">${orgPhone}</a></div>`
       : `<div class="cta-box">Reply to this email any time — we're happy to help.</div>`;
     pending.push(sendEmail({
+      organizationId: orgId,
       to: email,
       toName: fullName,
       subject: `${orgName} — your quote request is being reviewed, ${fullName}`,
@@ -368,6 +369,7 @@ ${cta}
     for (const to of recipients) {
       if (!(await orgMayEmail())) break;
       pending.push(sendEmail({
+        organizationId: orgId,
         to,
         subject: `New estimate request — ${fullName}`,
         from: sender.from,

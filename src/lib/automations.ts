@@ -3637,6 +3637,7 @@ export async function notifyReviewSubmitted(
             reviewUrl: `${siteUrl}/app/reviews`,
           });
           await sendEmail({
+            organizationId: organizationId,
             to: r.email,
             toName: r.fullName ?? undefined,
             ...template,
@@ -4367,6 +4368,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
         bookings: bookingRows,
       });
       await sendEmail({
+        organizationId: orgId,
         to: r.email,
         toName: r.fullName ?? undefined,
         ...template,
@@ -4464,6 +4466,7 @@ export async function sendPayoutNotification(args: {
         dashboardUrl: `${siteUrl}/app/settings/integrations`,
       });
       await sendEmail({
+        organizationId: org.id,
         to: r.email,
         toName: r.fullName ?? undefined,
         ...template,
@@ -4725,6 +4728,7 @@ export async function sendInvoiceReviewDigests(): Promise<{
         invoicesUrl: `${siteUrl}/app/invoices`,
       });
       await sendEmail({
+        organizationId: org.id,
         to: r.email,
         toName: r.fullName ?? undefined,
         ...template,
@@ -4929,6 +4933,7 @@ export async function sendWeeklyOpsDigests(): Promise<{
         dashboardUrl: `${siteUrl}/app/reports`,
       });
       await sendEmail({
+        organizationId: org.id,
         to: r.email,
         toName: r.fullName ?? undefined,
         ...template,
@@ -5170,6 +5175,7 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
         dashboardUrl: `${siteUrl}/app/reports`,
       });
       await sendEmail({
+        organizationId: org.id,
         to: r.email,
         toName: r.fullName ?? undefined,
         ...template,
@@ -5518,6 +5524,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
       });
 
       await sendEmail({
+        organizationId: org.id,
         to: recipient.email,
         toName: recipient.fullName ?? undefined,
         ...template,
@@ -5682,6 +5689,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
       });
 
       await sendEmail({
+        organizationId: org.id,
         to: recipient.email,
         toName: recipient.fullName ?? undefined,
         ...template,
@@ -5796,6 +5804,7 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
         isOver: total >= threshold,
       });
       await sendEmail({
+        organizationId: org.id,
         to: recipient.email,
         toName: recipient.fullName ?? undefined,
         ...template,
@@ -6197,6 +6206,7 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
       dashboardUrl: `${siteUrl}/field/time-off`,
     });
     await sendEmail({
+      organizationId: req.organization_id,
       to: recipient.email,
       toName: recipient.fullName ?? undefined,
       ...template,
@@ -6319,6 +6329,7 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
         dashboardUrl: `${siteUrl}/field/pay`,
       });
       await sendEmail({
+        organizationId: run.organization_id,
         to: recipient.email,
         toName: recipient.fullName ?? undefined,
         ...template,
@@ -6393,6 +6404,7 @@ export async function notifyTrainingAssigned(
       trainingUrl: `${siteUrl}/field/training/${assignment.module_id}`,
     });
     await sendEmail({
+      organizationId: assignment.organization_id,
       to: recipient.email,
       toName: recipient.fullName ?? undefined,
       ...template,
@@ -6508,6 +6520,7 @@ export async function sendCertificationExpiryReminders(): Promise<{
       trainingUrl: `${siteUrl}/field/training/${a.module_id}`,
     });
     await sendEmail({
+      organizationId: a.organization_id,
       to: recipient.email,
       toName: recipient.fullName ?? undefined,
       ...template,

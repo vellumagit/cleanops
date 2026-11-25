@@ -196,6 +196,7 @@ export async function POST(
         }
         pending.push(
           sendEmail({
+            organizationId: orgId,
             to,
             subject,
             from: sender.from,

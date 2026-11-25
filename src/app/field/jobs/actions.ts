@@ -669,6 +669,7 @@ async function emailShiftResponse(opts: {
         brandColor: opts.brandColor ?? undefined,
       });
       await sendEmail({
+        organizationId: opts.orgId,
         to: r.email,
         toName: r.fullName ?? undefined,
         ...template,

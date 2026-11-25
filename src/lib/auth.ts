@@ -166,6 +166,7 @@ export const getCurrentMembership = cache(
         billing_override: o.billing_override ?? null,
         trial_started_at: o.trial_started_at ?? null,
         automations_enabled: o.automations_enabled ?? null,
+        quiet_mode: o.quiet_mode ?? null,
       });
     }
   }

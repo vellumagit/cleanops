@@ -245,6 +245,15 @@ export async function sendOrgSms(
     return skipped;
   }
 
+  // Quiet mode (lib/quiet-mode.ts): a company that sends nothing, manual
+  // keys included. Its own read so it fails open like everywhere else,
+  // while the config read below fails closed.
+  const { isOrgQuiet } = await import("@/lib/quiet-mode");
+  if (await isOrgQuiet(orgId)) {
+    console.log(`[sms] org ${orgId} is in quiet mode — skipping ${args.automationKey}`);
+    return skipped;
+  }
+
   const admin = createSupabaseAdminClient();
 
   // Gate 2: org SMS config — master switch, sender number, plan/comp, cap.

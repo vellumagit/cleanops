@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  BellOff,
   ChevronDown,
   Zap,
   Users,
@@ -27,6 +28,7 @@ import {
   toggleAutomationAction,
   toggleAutomationsMasterAction,
   applyAutomationPresetAction,
+  setQuietModeAction,
   type AutomationKey,
 } from "./actions";
 import {
@@ -591,7 +593,7 @@ export function MasterSwitchBanner({
             <p className="mt-0.5 text-xs text-muted-foreground">
               {masterOn
                 ? `${enabledCount} automation${enabledCount === 1 ? "" : "s"} running across Sollos. Nothing else fires unless you turn it on.`
-                : "Nothing runs at all — no emails, texts, invoices, or reminders. This one switch covers client messages, team alerts, and the switches on Invoicing and Payroll."}
+                : "No automation runs: no confirmations, reminders, invoices or review asks. This one switch covers client messages, team alerts, and the switches on Invoicing and Payroll. Alerts about today's work (someone who hasn't clocked in, a no-show) still reach the office; quiet mode below stops those too."}
             </p>
           </div>
         </div>
@@ -602,6 +604,46 @@ export function MasterSwitchBanner({
             className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
           >
             {masterOn ? "Turn all off" : "Turn automations on"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Quiet mode (lib/quiet-mode.ts): the switch above stops automations; this
+ * stops everything that would leave the account, for a demo or a test
+ * account that should make no noise between uses.
+ */
+export function QuietModeCard({ quiet }: { quiet: boolean }) {
+  return (
+    <div
+      id="quiet-mode"
+      data-testid="quiet-mode"
+      className={`mb-4 scroll-mt-20 rounded-lg border p-4 ${
+        quiet ? "border-sky-500/50 bg-sky-500/10" : "border-border bg-card"
+      }`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <BellOff className={`mt-0.5 h-4 w-4 shrink-0 ${quiet ? "text-sky-700 dark:text-sky-400" : "text-muted-foreground"}`} />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{quiet ? "Quiet mode is on" : "Quiet mode"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {quiet
+                ? "Nothing is sent from this account: no emails, texts or phone alerts, to clients or to your team, not even the ones you send by hand. Visits, invoices and the bell inside the app carry on as usual."
+                : "Stops everything this account would send: emails, texts and phone alerts, to clients and to your team, whatever else is switched on. For a demo or test account between uses. Don't turn it on for a business you run: nobody would be told anything."}
+            </p>
+          </div>
+        </div>
+        <form action={setQuietModeAction}>
+          <input type="hidden" name="quiet" value={quiet ? "false" : "true"} />
+          <button
+            type="submit"
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+          >
+            {quiet ? "Turn quiet mode off" : "Turn quiet mode on"}
           </button>
         </form>
       </div>

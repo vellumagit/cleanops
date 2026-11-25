@@ -93,6 +93,12 @@ export type SendEmailArgs = {
    * /api/u/g/<token>). Omit for purely transactional mail.
    */
   unsubscribeUrl?: string;
+  /**
+   * The company this email is sent for, when there is one. A company in
+   * quiet mode (lib/quiet-mode.ts) sends nothing. sendOrgEmail fills this
+   * in itself; a direct sendEmail about a company's work should pass it.
+   */
+  organizationId?: string;
 };
 
 /**
@@ -125,6 +131,14 @@ export type SendEmailResult =
 export async function sendEmailDetailed(
   args: SendEmailArgs,
 ): Promise<SendEmailResult> {
+  if (args.organizationId) {
+    const { isOrgQuiet, QUIET_MODE_REASON } = await import("@/lib/quiet-mode");
+    if (await isOrgQuiet(args.organizationId)) {
+      console.log(`[email] org ${args.organizationId} is in quiet mode — skipping "${args.subject}"`);
+      return { ok: false, reason: QUIET_MODE_REASON };
+    }
+  }
+
   const client = getClient();
   if (!client) {
     console.warn("[email] Resend not configured, skipping:", args.subject);
@@ -638,6 +652,14 @@ export async function sendOrgEmailDetailed(
       `[email] client emails paused at platform level — skipping "${args.subject}" for org ${organizationId}`,
     );
     return { ok: false, reason: "Client-facing emails are paused at the platform level (CLIENT_EMAILS_PAUSED=true)." };
+  }
+
+  // Before the cap, so a send that never happens is never counted. No
+  // exemption, not even pauseExempt: quiet means nothing leaves.
+  const { isOrgQuiet, QUIET_MODE_REASON } = await import("@/lib/quiet-mode");
+  if (await isOrgQuiet(organizationId)) {
+    console.log(`[email] org ${organizationId} is in quiet mode — skipping "${args.subject}"`);
+    return { ok: false, reason: QUIET_MODE_REASON };
   }
 
   const cap = await withinOrgEmailCap(organizationId, args.subject);

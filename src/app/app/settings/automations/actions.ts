@@ -323,6 +323,30 @@ export async function toggleAutomationsMasterAction(formData: FormData) {
 }
 
 /**
+ * Quiet mode (lib/quiet-mode.ts): nothing is sent for this company at all,
+ * whatever else is switched on. Owner and admin only, like the master switch.
+ */
+export async function setQuietModeAction(formData: FormData) {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const quiet = formData.get("quiet") === "true";
+
+  const admin = createSupabaseAdminClient();
+  const { error } = (await admin
+    .from("organizations")
+    .update({ quiet_mode: quiet } as never)
+    .eq("id", membership.organization_id)) as unknown as { error: { message: string } | null };
+  if (error) {
+    console.error("[quiet-mode] could not save:", error.message);
+    throw new Error("Quiet mode could not be saved. Try again.");
+  }
+
+  revalidatePath("/app/settings", "layout");
+  revalidatePath("/app", "layout");
+}
+
+/**
  * Set the org's house default for automated client messages. Clients on
  * contact_preference='inherit' (the default) follow this; per-client settings
  * override it. Setting this to 'none' is the "silence everyone, then switch on

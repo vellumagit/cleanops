@@ -9,6 +9,7 @@ import {
   INTERNAL_STAGES,
   MasterSwitchBanner,
   OtherAutomationPages,
+  QuietModeCard,
 } from "@/app/app/settings/automations/automation-catalog";
 import {
   EMPTY_THRESHOLDS,
@@ -33,13 +34,14 @@ export default async function TeamAlertsPage() {
 
   const { data: org } = (await admin
     .from("organizations")
-    .select(`automation_settings, automations_enabled, ${THRESHOLD_SELECT}`)
+    .select(`automation_settings, automations_enabled, quiet_mode, ${THRESHOLD_SELECT}`)
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
     data:
       | ({
           automation_settings: Record<string, { enabled: boolean }>;
           automations_enabled: boolean | null;
+          quiet_mode: boolean | null;
         } & ThresholdValues)
       | null;
   };
@@ -65,6 +67,7 @@ export default async function TeamAlertsPage() {
       }
     >
       <MasterSwitchBanner masterOn={masterOn} enabledCount={enabledCount} />
+      <QuietModeCard quiet={org?.quiet_mode === true} />
       <OtherAutomationPages current="team" />
 
       <div className="mb-6 grid gap-x-6 gap-y-2 rounded-lg border border-border bg-muted/30 px-4 py-3 sm:grid-cols-2">

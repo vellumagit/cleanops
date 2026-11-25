@@ -227,6 +227,7 @@ export async function POST(
       .filter(Boolean)
       .join("<br>");
     pending.push(sendEmail({
+      organizationId: orgId,
       to: email,
       toName: name,
       subject: `${name}, we've received your message ✨`,
@@ -291,6 +292,7 @@ ${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's
     for (const to of recipients) {
       if (!(await orgMayEmail())) break;
       pending.push(sendEmail({
+        organizationId: orgId,
         to,
         subject: `New website inquiry — ${name}`,
         from: sender.from,

@@ -29,11 +29,12 @@ export type PrefetchedOrgSettings = {
   billing_override?: string | null;
   trial_started_at?: string | null;
   automations_enabled?: boolean | null;
+  quiet_mode?: boolean | null;
 };
 
 /** The organizations columns getCurrentMembership reads alongside the name. */
 export const PREFETCHED_ORG_COLUMNS =
-  "timezone, currency_code, automation_settings, billing_override, trial_started_at, automations_enabled";
+  "timezone, currency_code, automation_settings, billing_override, trial_started_at, automations_enabled, quiet_mode";
 
 const store = cache(() => new Map<string, PrefetchedOrgSettings>());
 

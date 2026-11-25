@@ -31,6 +31,14 @@ The master switch doesn't touch buttons you press yourself: sending an invoice o
 
 **Turning it back on starts fresh.** Nothing is saved up while it's off, so there's no pile of messages waiting. Reminders and schedules only look ahead, and review requests (ours and the Google one) leave alone any visit from before you switched on. What does carry over is money and housekeeping: invoice drafts that were held go out on their usual schedule, overdue reminders pick up their weekly rhythm, and past jobs are closed.
 
+The master switch stops automations, not alerts about today's work. Someone who hasn't clocked in, a no-show to decide on, a shift left running: those still reach the office, because a business that's running needs them.
+
+### Quiet mode
+
+Below the master switch, **Quiet mode** stops everything the account would send: emails, texts and phone alerts, to clients and to your team, including the ones you send by hand. It's meant for a demo or test account between uses. Visits, invoices and the bell inside the app carry on as usual, so turning it off leaves nothing to catch up on. While it's on, a blue bar across the top of every page says so.
+
+Don't turn it on for a business you run: nobody would be told anything, not even that someone hasn't shown up.
+
 ## Presets
 
 Three starting points sit on **Settings → Client messages**. Presets only ever turn things **on** — they never switch off something you enabled — and each one also turns the master switch on. The larger ones reach beyond client messages: they also switch on invoice drafting and a few team alerts.
