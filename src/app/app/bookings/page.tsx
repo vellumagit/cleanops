@@ -19,6 +19,7 @@ import { loadCoverNeeded } from "@/lib/cover-needed";
 import { coverReason, coverSummary } from "@/lib/cover-needed-text";
 import { PutOnAnywayButton } from "./put-on-anyway-button";
 import { keptSentence } from "@/lib/series-hand-set";
+import { bookingSearchOr, containsPattern } from "@/lib/booking-search";
 
 export const metadata = { title: "Bookings" };
 
@@ -49,15 +50,24 @@ export default async function BookingsPage({
   const showArchived = archived === "1";
   const clientFilter = client?.trim() || null;
   // Which rows to send. "upcoming" (the default tab, and Today) sends from the
-  // start of today on; "all" sends the newest LIST_LIMIT of everything. A
-  // search, one client's list and the archive need everything to look in.
+  // start of today on. "all" (Past, All, one client's list, the archive)
+  // sends the next UPCOMING_LIMIT visits AND the latest LIST_LIMIT before
+  // today, fetched apart: one newest-first list of 1,000 was all future for
+  // a company with a year of recurring visits booked, so Past had nothing
+  // to show for a search (2026-11-25).
+  //
+  // A search no longer switches the scope by itself: the tabs apply to a
+  // search like to anything else. The search itself runs here, on the
+  // server, over everything in the scope (lib/booking-search.ts): Upcoming
+  // holds only the next UPCOMING_LIMIT visits, and Svit has years of
+  // recurring visits booked past that.
+  const needle = (q ?? "").trim();
   const scope: "upcoming" | "all" =
-    tab === "past" || tab === "all" || (q ?? "").trim() !== "" || clientFilter || showArchived
-      ? "all"
-      : "upcoming";
+    tab === "past" || tab === "all" || clientFilter || showArchived ? "all" : "upcoming";
   const todayStartIso = zonedDayBoundsUtc(new Date(), await tzPromise, 0).start.toISOString();
 
-  let query = supabase
+  const listQuery = (searchOr: string | null) => {
+    let query = supabase
     .from("bookings")
     .select(
       `
@@ -84,17 +94,21 @@ export default async function BookingsPage({
       `,
     );
 
-  // Explicit org scope — a two-org admin reads both orgs via RLS alone.
-  query = query.eq("organization_id", membership.organization_id);
+    // Explicit org scope — a two-org admin reads both orgs via RLS alone.
+    query = query.eq("organization_id", membership.organization_id);
 
-  // ?client= — the client page's stat cards and "View all" promise this
-  // scoping; the param was accepted and ignored for months.
-  if (clientFilter) query = query.eq("client_id", clientFilter);
+    // ?client= — the client page's stat cards and "View all" promise this
+    // scoping; the param was accepted and ignored for months.
+    if (clientFilter) query = query.eq("client_id", clientFilter);
 
-  // Default: hide auto-archived rows. When ?archived=1, show ONLY archived.
-  query = showArchived
-    ? query.not("archived_at" as never, "is" as never, null as never)
-    : query.is("archived_at" as never, null as never);
+    // Default: hide auto-archived rows. When ?archived=1, show ONLY archived.
+    query = showArchived
+      ? query.not("archived_at" as never, "is" as never, null as never)
+      : query.is("archived_at" as never, null as never);
+
+    if (searchOr) query = query.or(searchOr);
+    return query;
+  };
 
   // Active employees for the org — feeds the per-row "Assign" popup.
   // Promise.resolve subscribes the lazy builder NOW so it runs in
@@ -114,6 +128,29 @@ export default async function BookingsPage({
     }> | null;
   }>;
 
+  // The search: the clients and cleaners whose names match, then one
+  // filter for the list and its count.
+  const searchOrPromise: Promise<string | null> =
+    needle
+      ? (async () => {
+          const lower = needle.toLowerCase();
+          const [{ data: clientRows }, { data: people }] = await Promise.all([
+            supabase
+              .from("clients")
+              .select("id")
+              .eq("organization_id", membership.organization_id)
+              .ilike("name", containsPattern(needle))
+              .limit(500) as unknown as Promise<{ data: Array<{ id: string }> | null }>,
+            employeesPromise,
+          ]);
+          return bookingSearchOr({
+            needle,
+            clientIds: (clientRows ?? []).map((c) => c.id),
+            memberIds: (people ?? []).filter((m) => memberDisplayName(m).toLowerCase().includes(lower)).map((m) => m.id),
+          });
+        })()
+      : Promise.resolve(null);
+
   // Everything below that does not need the list starts NOW, beside it.
   // This page used to ask its questions one at a time: the list, then a
   // count, then the accommodation flags, the crews, the coverage, the cover
@@ -125,15 +162,18 @@ export default async function BookingsPage({
   // The total is counted whether or not the list comes back full: a head
   // count is cheap, and Svit's list is at the limit (983 of 1,000 on
   // 2026-11-16), so waiting to find out cost a round trip on every visit.
-  let counted = supabase
-    .from("bookings")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", membership.organization_id);
-  if (clientFilter) counted = counted.eq("client_id", clientFilter);
-  counted = showArchived
-    ? counted.not("archived_at" as never, "is" as never, null as never)
-    : counted.is("archived_at" as never, null as never);
-  const totalPromise = Promise.resolve(counted);
+  const totalPromise = searchOrPromise.then((searchOr) => {
+    let counted = supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", membership.organization_id);
+    if (clientFilter) counted = counted.eq("client_id", clientFilter);
+    counted = showArchived
+      ? counted.not("archived_at" as never, "is" as never, null as never)
+      : counted.is("archived_at" as never, null as never);
+    if (searchOr) counted = counted.or(searchOr);
+    return counted;
+  });
   const pastCountPromise =
     scope === "upcoming"
       ? (Promise.resolve(
@@ -217,16 +257,26 @@ export default async function BookingsPage({
     }
   })();
 
-  const { data, error } = await ((scope === "upcoming"
-    ? query
-        .gte("scheduled_at", todayStartIso)
-        .order("scheduled_at", { ascending: true })
-        .order("id", { ascending: true })
-        .limit(UPCOMING_LIMIT)
-    : query
-        .order("scheduled_at", { ascending: false })
-        .order("id", { ascending: false })
-        .limit(LIST_LIMIT)) as unknown as Promise<{
+  const searchOr = await searchOrPromise;
+  const [aheadRes, behindRes] = await Promise.all([
+    listQuery(searchOr)
+      .gte("scheduled_at", todayStartIso)
+      .order("scheduled_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(UPCOMING_LIMIT) as unknown as Promise<ListResult>,
+    scope === "all"
+      ? (listQuery(searchOr)
+          .lt("scheduled_at", todayStartIso)
+          .order("scheduled_at", { ascending: false })
+          .order("id", { ascending: false })
+          .limit(LIST_LIMIT) as unknown as Promise<ListResult>)
+      : Promise.resolve<ListResult>({ data: [], error: null }),
+  ]);
+  const error = aheadRes.error ?? behindRes.error;
+  const aheadCapped = (aheadRes.data ?? []).length >= UPCOMING_LIMIT;
+  const behindCapped = (behindRes.data ?? []).length >= LIST_LIMIT;
+  const data = [...(behindRes.data ?? []), ...(aheadRes.data ?? [])];
+  type ListResult = {
     data: Array<{
       id: string;
       scheduled_at: string;
@@ -248,7 +298,7 @@ export default async function BookingsPage({
       } | null;
     }> | null;
     error: { message: string } | null;
-  }>);
+  };
 
   if (error) throw error;
 
@@ -331,10 +381,11 @@ export default async function BookingsPage({
     dividesPromise,
   ]);
   const { count: pastCount } = await pastCountPromise;
-  // The full list stops at LIST_LIMIT; only then is the total worth saying.
+  // The full list stops at UPCOMING_LIMIT ahead and LIST_LIMIT behind; only
+  // when one of them is full is the total worth saying.
   const total: number | null =
-    scope === "all" && (data ?? []).length >= LIST_LIMIT ? (totalCount ?? null) : null;
-  const upcomingCapped = scope === "upcoming" && (data ?? []).length >= UPCOMING_LIMIT;
+    scope === "all" && (aheadCapped || behindCapped) ? (totalCount ?? null) : null;
+  const upcomingCapped = scope === "upcoming" && aheadCapped;
 
   const employees = (employeesData ?? []).map((m) => ({
     id: m.id,
@@ -522,8 +573,14 @@ export default async function BookingsPage({
       )}
       {total != null && total > rows.length && (
         <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
-          Showing the latest {rows.length.toLocaleString()} of {total.toLocaleString()} bookings. The oldest
-          aren&apos;t listed here: open a client to see all of theirs.
+          Showing {rows.length.toLocaleString()} of {total.toLocaleString()} bookings
+          {needle ? <> matching &ldquo;{needle}&rdquo;</> : null}:
+          {behindCapped && aheadCapped
+            ? " the latest past ones and the next upcoming ones."
+            : behindCapped
+              ? " the oldest aren't listed here."
+              : " the furthest ahead aren't listed here."}{" "}
+          {needle ? "Search for something narrower" : "Search, or open a client"} to see the rest.
         </p>
       )}
       {upcomingCapped && (
@@ -563,6 +620,7 @@ export default async function BookingsPage({
         tz={tz}
         employees={employees}
         scope={scope}
+        serverQuery={needle}
         serverCounts={
           scope === "upcoming"
             ? { past: pastCount ?? 0, all: totalCount ?? rows.length }

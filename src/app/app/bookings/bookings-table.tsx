@@ -175,6 +175,19 @@ function compareForReading(a: BookingRow, b: BookingRow, dayStart: number) {
   return aPast ? tb - ta : ta - tb;
 }
 
+/** What the search box matches. The server searches too
+ *  (lib/booking-search.ts), across everything; this narrows what is loaded
+ *  while its answer is on the way. */
+function matchesQuery(r: BookingRow, needle: string): boolean {
+  return (
+    r.client_name.toLowerCase().includes(needle) ||
+    r.service_type.toLowerCase().includes(needle) ||
+    (r.service_type_label ?? "").toLowerCase().includes(needle) ||
+    (r.assigned_name ?? "").toLowerCase().includes(needle) ||
+    (r.address ?? "").toLowerCase().includes(needle)
+  );
+}
+
 function matchesTimeTab(row: BookingRow, tab: TimeTab): boolean {
   if (tab === "all") return true;
   const d = new Date(row.scheduled_at);
@@ -193,6 +206,7 @@ export function BookingsTable({
   tz,
   employees,
   scope = "all",
+  serverQuery = "",
   serverCounts = null,
 }: {
   rows: BookingRow[];
@@ -201,11 +215,15 @@ export function BookingsTable({
   employees: AssignableEmployee[];
   /** "upcoming": the server sent only today onward (page.tsx). "all": the full list. */
   scope?: "upcoming" | "all";
+  /** The search the server already applied to these rows. */
+  serverQuery?: string;
   /** Past/All totals when scope is "upcoming", for the tab badges. */
   serverCounts?: { past: number; all: number } | null;
 }) {
   const router = useRouter();
   const [loadingFullList, startFullList] = useTransition();
+  // A search re-asks the server; the table stays up meanwhile.
+  const [searching, startSearch] = useTransition();
   // Carry the board/list state we are on, so Save and Cancel return here.
   const withReturn = useReturnTo();
   // Tab, search and the four filters live in the URL. They used to be plain
@@ -297,26 +315,17 @@ export function BookingsTable({
 
   // Filter pipeline
   const filtered = useMemo(() => {
-    let result = rows;
-    // When a search query is active, bypass the time tab so any booking is
-    // findable regardless of which tab is open.
-    if (!query.trim()) {
-      result = result.filter((r) => matchesTimeTab(r, tab));
-    }
+    // The tab applies to a search too. A search used to skip it, so Past
+    // with "Brian" typed showed his upcoming visits and Today showed every
+    // day (2026-11-25).
+    let result = rows.filter((r) => matchesTimeTab(r, tab));
     if (statusFilter !== "all") {
       result = result.filter((r) => r.status === statusFilter);
     }
 
     if (query.trim()) {
       const needle = query.trim().toLowerCase();
-      result = result.filter(
-        (r) =>
-          r.client_name.toLowerCase().includes(needle) ||
-          r.service_type.toLowerCase().includes(needle) ||
-          (r.service_type_label ?? "").toLowerCase().includes(needle) ||
-          (r.assigned_name ?? "").toLowerCase().includes(needle) ||
-          (r.address ?? "").toLowerCase().includes(needle),
-      );
+      result = result.filter((r) => matchesQuery(r, needle));
     }
     if (serviceFilter !== "all") {
       result = result.filter(
@@ -359,18 +368,36 @@ export function BookingsTable({
   const warnings = useMemo(() => computeBookingWarnings(rows), [rows]);
 
   // Tab counts by time window.
+  // While searching, each tab counts what matches on it.
   const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
+    const needle = query.trim().toLowerCase();
+    const pool = needle ? rows.filter((r) => matchesQuery(r, needle)) : rows;
+    const counts: Partial<Record<string, number>> = {};
     for (const t of TIME_TABS) {
-      counts[t.key] = rows.filter((r) => matchesTimeTab(r, t.key)).length;
+      counts[t.key] = pool.filter((r) => matchesTimeTab(r, t.key)).length;
     }
-    // Only today onward is loaded: Past and All are counted by the server.
-    if (scope === "upcoming" && serverCounts) {
-      counts.past = serverCounts.past;
-      counts.all = serverCounts.all;
+    // Only today onward is loaded: Past and All are counted by the server,
+    // which hasn't searched them. No number beats a wrong one.
+    if (scope === "upcoming") {
+      counts.past = needle ? undefined : serverCounts?.past;
+      counts.all = needle ? undefined : serverCounts?.all;
     }
     return counts;
-  }, [rows, scope, serverCounts]);
+  }, [rows, scope, serverCounts, query]);
+
+  // The search runs on the server, over everything: Upcoming holds only the
+  // next 500 visits and Past the latest 1,000. Ask again once typing pauses;
+  // the rows already here are narrowed meanwhile.
+  useEffect(() => {
+    if (query.trim() === serverQuery) return;
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (query.trim()) params.set("q", query.trim());
+      else params.delete("q");
+      startSearch(() => router.replace(`/app/bookings?${params.toString()}`, { scroll: false }));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [query, serverQuery, router]);
 
   // How many of the matching rows are drawn. Keyed by what is being looked
   // at, so a new tab, search or filter starts again from the first page.
@@ -443,7 +470,7 @@ export function BookingsTable({
                   : "bg-muted-foreground/20 text-muted-foreground",
               )}
             >
-              {tabCounts[t.key]}
+              {tabCounts[t.key] ?? "·"}
             </span>
           </button>
         ))}
@@ -457,8 +484,14 @@ export function BookingsTable({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search client, service, address…"
+            aria-busy={searching || undefined}
             className="pl-8 h-8 text-xs"
           />
+          {searching && (
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+              Searching all bookings…
+            </span>
+          )}
         </div>
 
         <button
@@ -586,7 +619,7 @@ export function BookingsTable({
         >
           Loading all bookings…
         </div>
-      ) : rows.length === 0 && (scope === "all" || (serverCounts?.all ?? 0) === 0) ? (
+      ) : rows.length === 0 && !query.trim() && activeFilterCount === 0 && (scope === "all" || (serverCounts?.all ?? 0) === 0) ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
           <p className="text-sm font-medium text-foreground">No bookings yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -609,7 +642,7 @@ export function BookingsTable({
           </button>
           {query.trim() && scope === "upcoming" && (
             <p className="mt-3 text-xs text-muted-foreground">
-              Only upcoming visits were searched.{" "}
+              Only {tab === "today" ? "today's" : "upcoming"} visits were searched.{" "}
               <button
                 type="button"
                 onClick={searchEverything}
