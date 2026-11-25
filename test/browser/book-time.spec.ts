@@ -101,7 +101,8 @@ describe("booking a time on a company's page", () => {
       expect(await overflow(phone.page)).toBeLessThanOrEqual(1);
 
       const [v] = await visits();
-      expect(v).toMatchObject({ status: "confirmed", lead: c.anna.membershipId, online: true, address: "12 Elm Street" });
+      // Nobody is put on it: the office chooses who (2026-11-25).
+      expect(v).toMatchObject({ status: "confirmed", lead: null, online: true, address: "12 Elm Street" });
       expect(Date.parse(v.at)).toBe(regina(D, "10:00"));
 
       // The office: the visit, marked, with the client's words.
@@ -110,6 +111,12 @@ describe("booking a time on a company's page", () => {
       const officeView = await says(owner.page, "Dana Whitfield");
       expect(officeView).toContain("Booked online");
       expect(officeView).toContain("Two cats");
+
+      // And the dashboard asks for a cleaner, with a button to put one on.
+      await visit(stack, owner.page, "/app");
+      const dash = await says(owner.page, "booked online, needs a cleaner");
+      expect(dash).toContain("Dana Whitfield");
+      expect(dash).toContain("Put a cleaner on it");
 
       // That morning has gone for the next visitor.
       await visit(stack, phone.page, `/book/${slug}/time`);

@@ -5,7 +5,7 @@
  * clocks change.
  */
 import { describe, expect, it } from "vitest";
-import { noTimesSentence, onSiteMinutes, openTimesForDay, type EngineCleaner, type OpenTimeRules } from "./open-times";
+import { noTimesSentence, onSiteMinutes, openTimesForDay, type EngineCleaner, type Held, type OpenTimeRules } from "./open-times";
 import { zonedParts, zonedWallClockUtc } from "./wall-clock";
 
 const REGINA = "America/Regina";
@@ -41,6 +41,7 @@ function ask(over: {
   crew?: number;
   shares?: boolean;
   cleaners?: EngineCleaner[];
+  held?: Held[];
 } = {}) {
   const tz = over.tz ?? REGINA;
   const ymd = over.ymd ?? DAY;
@@ -58,6 +59,7 @@ function ask(over: {
     crewSize: over.crew ?? 1,
     sharesHours: over.shares ?? true,
     cleaners: over.cleaners ?? [free("anna")],
+    held: over.held,
   });
 }
 const starts = (r: ReturnType<typeof ask>) => r.times.map((t) => t.hhmm);
@@ -198,6 +200,36 @@ describe("a crew of more than one", () => {
     // Three on file, two needed: any two will do.
     const three = [free("anna", { off: true }), free("bea"), free("cara")];
     expect(ask({ minutes: 240, crew: 2, cleaners: three }).times[0].cleaners).toEqual(["bea", "cara"]);
+  });
+});
+
+describe("visits booked online that nobody is on yet", () => {
+  const held = (from: string, to: string, need = 1): Held => ({ ...busyOn(DAY, from, to), need });
+
+  it("each holds a person for its window: with two free, one held visit leaves room for one more", () => {
+    const two = [free("anna"), free("bea")];
+    expect(starts(ask({ cleaners: two, held: [held("10:00", "12:00")] }))).toContain("10:00");
+    expect(starts(ask({ cleaners: two, held: [held("10:00", "12:00"), held("10:00", "12:00")] }))).not.toContain("10:00");
+    // Overlapping only part of it still holds the person.
+    expect(starts(ask({ cleaners: two, held: [held("09:00", "11:00"), held("11:00", "13:00")] }))).toContain("10:00");
+    expect(starts(ask({ cleaners: two, held: [held("09:00", "11:00"), held("10:30", "11:30")] }))).not.toContain("10:00");
+  });
+
+  it("the gap counts: a held visit ending at ten keeps a lone cleaner off ten when the gap is half an hour", () => {
+    expect(starts(ask({ held: [held("08:00", "10:00")] }))).toContain("10:00");
+    expect(starts(ask({ held: [held("08:00", "10:00")], rules: { gapMinutes: 30 } }))).not.toContain("10:00");
+  });
+
+  it("a held job for two holds two people", () => {
+    const three = [free("anna"), free("bea"), free("cy")];
+    expect(starts(ask({ cleaners: three, held: [held("10:00", "11:00", 2)] }))).toContain("10:00");
+    expect(starts(ask({ cleaners: three, crew: 2, held: [held("10:00", "11:00", 2)] }))).not.toContain("10:00");
+  });
+
+  it("nothing held: every free start, as before; all held: the day says full", () => {
+    expect(starts(ask({ held: [] }))).toEqual(starts(ask({})));
+    const allDay = ask({ held: [held("09:00", "17:00")] });
+    expect(allDay).toEqual({ times: [], reason: "full" });
   });
 });
 

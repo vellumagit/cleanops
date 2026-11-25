@@ -156,6 +156,17 @@ nobody assigned clashes with nothing, so ten of them could land on one morning.
 Recommendation: the company picks which cleaners take online bookings. A time
 is open only when enough of them are free, and the booking is given to one of
 them straight away (fewest jobs that day first). The office can change it.
+**Changed 2026-11-25 (Brian): nobody is put on it.** An online booking goes in
+unstaffed, the office is emailed, and the dashboard lists it as needing a
+cleaner until someone is on it. Each unstaffed online visit holds the people
+its service needs (`held` in lib/open-times.ts), so times still close as the
+pool fills; of two visitors pressing for the last free person at once, the one
+booked first keeps it: the database saves online bookings one at a time per
+company and checks for room under that lock (insert_online_booking_if_room,
+migration 20261125020000; tested under real concurrency in
+test/load/online-booking.load.test.ts, which left four visits for three
+cleaners when the check ran from the app after the insert). A client can
+still move an unstaffed online visit, against the same pool.
 
 **Two people taking the same time.** The slot is checked again inside the save,
 and the database guard refuses the loser, who is shown the next open times.
@@ -412,7 +423,8 @@ shown before paying.
 
 3. Default mode for a new company: ask me first (recommended) or instant.
 4. Assignment: give the visit to a free cleaner at once (recommended) or leave
-   it for the office with a cap on jobs per time.
+   it for the office with a cap on jobs per time. **Decided 2026-11-25: left
+   for the office**, capped by the free cleaners who take online bookings.
 5. Which plan includes online booking, if it is not on every plan.
 
 ## Not decided, not researched

@@ -137,6 +137,9 @@ async function company(mode: Mode, opts: { sharesHours?: boolean; takers?: "anna
     "insert into public.booking_pages (organization_id, slug, status, time_booking, opening_hours, slot_step_minutes, gap_minutes, min_notice_hours) values ($1, $2, 'published', $3, $4::jsonb, 60, 30, 24)",
     [org, c.slug, mode, JSON.stringify(hours)],
   );
+  for (const [n, m] of Object.entries({ owner: c.owner, admin: c.admin, manager: c.manager })) {
+    await api.sql("update public.memberships set contact_email = $2 where id = $1", [m.membershipId, `${n}.${m.membershipId.slice(0, 6)}@office.test`]);
+  }
   const takers = opts.takers === "both" ? [c.anna, c.bea] : [c.anna];
   await api.sql("update public.memberships set takes_online_bookings = true where id = any($1::uuid[])", [takers.map((m) => m.membershipId)]);
   return c;
@@ -178,6 +181,8 @@ const crewOf = async (bookingId: string) =>
 const lifecycle = async (clientId: string) => (await api.sql<{ l: string }>("select lifecycle as l from public.clients where id = $1", [clientId]))[0].l;
 const notices = (c: Co, title: string) =>
   api.sql<{ r: string; body: string; href: string }>("select recipient_membership_id as r, body, href from public.notifications where organization_id = $1 and title = $2", [c.org, title]);
+/** Emails that reached the office (owner, admin, manager addresses). */
+const officeMail = () => outbox.email.filter((m) => m.to.endsWith("@office.test"));
 const HOURLY = ["9:00 AM", "10:00 AM", "11:00 AM", "12:00 PM", "1:00 PM", "2:00 PM", "3:00 PM"];
 
 describe.skipIf(!hasPostgrest)("switched off, which is how every page starts", { timeout: 120_000 }, () => {
@@ -203,7 +208,7 @@ describe.skipIf(!hasPostgrest)("switched off, which is how every page starts", {
 });
 
 describe.skipIf(!hasPostgrest)("booked straight away", { timeout: 120_000 }, () => {
-  it("the visitor sees days and times and nothing else; a booking is a real, confirmed visit with a cleaner on it", async () => {
+  it("the visitor sees days and times and nothing else; a booking is a real, confirmed visit, with nobody on it, and the office is emailed", async () => {
     const c = await company("instant");
     const shown = await times(c);
     expect(shown.error).toBeUndefined();
@@ -224,9 +229,10 @@ describe.skipIf(!hasPostgrest)("booked straight away", { timeout: 120_000 }, () 
 
     const [v, ...rest] = await visits(c);
     expect(rest).toEqual([]);
-    expect(v).toMatchObject({ status: "confirmed", minutes: 120, lead: c.anna.membershipId, online: true, service: "Standard clean", cents: 15000, address: "12 Elm Street" });
+    // Nobody is put on it: the office chooses who (2026-11-25).
+    expect(v).toMatchObject({ status: "confirmed", minutes: 120, lead: null, online: true, service: "Standard clean", cents: 15000, address: "12 Elm Street" });
     expect(Date.parse(v.at)).toBe(regina(D, "10:00"));
-    expect(await crewOf(v.id)).toEqual([{ m: c.anna.membershipId, p: true }]);
+    expect(await crewOf(v.id)).toEqual([]);
     // Someone new: on the books, and a client now that they have a visit.
     const [person] = await api.sql<{ id: string; name: string; lead_source: string | null }>("select id, name, lead_source from public.clients where organization_id = $1 and lower(email) = $2", [c.org, email]);
     expect(person).toMatchObject({ id: v.client, name: "Dana Whitfield", lead_source: "web_form" });
@@ -235,11 +241,14 @@ describe.skipIf(!hasPostgrest)("booked straight away", { timeout: 120_000 }, () 
     expect(await api.sql("select kind, body, status from public.client_job_requests where booking_id = $1", [v.id])).toEqual([
       { kind: "job_note", body: "Two cats, key under the mat", status: "resolved" },
     ]);
-    // The office is told, with a link to the visit.
-    const told = await notices(c, "Booked online");
+    // The office is told, with a link to the visit, in the app and by email,
+    // and asked to put a cleaner on it.
+    const told = await notices(c, "New online booking: Dana Whitfield");
     expect(told.map((n) => n.r).sort()).toEqual([c.owner.membershipId, c.admin.membershipId, c.manager.membershipId].sort());
     expect(told[0].body).toContain("Dana Whitfield booked Standard clean");
+    expect(told[0].body).toContain("Nobody is on it yet: put a cleaner on it.");
     expect(told[0].href).toBe(`/app/bookings/${v.id}`);
+    expect(officeMail().map((m) => m.to.split(".")[0]).sort()).toEqual(["admin", "manager", "owner"]);
     // The visitor is told, even though this company never switched on its
     // confirmation emails: the page promised one.
     const mail = outbox.email.filter((m) => m.to === email);
@@ -270,19 +279,36 @@ describe.skipIf(!hasPostgrest)("booked straight away", { timeout: 120_000 }, () 
     expect(await visits(c)).toEqual([]);
   });
 
-  it("goes to the cleaner with the fewest jobs that day", async () => {
+  it("nobody is put on it, but it holds a person's time: two free means two visitors, the third is told it went", async () => {
     const c = await company("instant", { takers: "both" });
+    expect((await press(c)).done, api.log()).toBeTruthy();
+    // Still offered: Bea (or Anna) is free at ten.
+    expect(await labelsOn(c, D)).toContain("10:00 AM");
+    expect((await press(c)).done, api.log()).toBeTruthy();
+    // Both are spoken for now, though neither is named.
+    expect(await press(c)).toEqual({ taken: true });
+    expect((await visits(c)).map((v) => v.lead)).toEqual([null, null]);
+    // Someone on a job then counts as busy as before: with one of them on
+    // an office job at two, a single visitor can still have two.
     const client = await addClient(api.sql, c.org, "Jordan");
-    // Whoever sorts first would get it; give that person a morning job.
-    const [busier, quieter] = [c.anna, c.bea].sort((a, b) => a.membershipId.localeCompare(b.membershipId));
-    const earlier = await addBooking(api.sql, c.org, client, { scheduledAt: new Date(regina(D, "09:00")).toISOString(), durationMinutes: 60 });
-    await addCrew(api.sql, c.org, earlier, busier.membershipId);
+    const officeJob = await addBooking(api.sql, c.org, client, { scheduledAt: new Date(regina(D, "14:00")).toISOString(), durationMinutes: 60 });
+    await addCrew(api.sql, c.org, officeJob, c.anna.membershipId);
     expect((await press(c, { at: String(regina(D, "14:00")) })).done, api.log()).toBeTruthy();
-    const mine = (await visits(c)).find((v) => v.online)!;
-    expect(mine.lead).toBe(quieter.membershipId);
+    expect(await press(c, { at: String(regina(D, "14:00")) })).toEqual({ taken: true });
   });
 
-  it("a job for two puts two on it, the first as lead, and holds each for their share", async () => {
+  it("once the office puts someone on it, the hold becomes that person's", async () => {
+    const c = await company("instant", { takers: "both" });
+    expect((await press(c)).done).toBeTruthy();
+    const [v] = await visits(c);
+    await addCrew(api.sql, c.org, v.id, c.anna.membershipId);
+    await api.sql("update public.bookings set assigned_to = $2 where id = $1", [v.id, c.anna.membershipId]);
+    // Bea is still free at ten; Anna isn't, and nothing is held twice.
+    expect((await press(c)).done, api.log()).toBeTruthy();
+    expect(await press(c)).toEqual({ taken: true });
+  });
+
+  it("a job for two holds two people for their share, with nobody named", async () => {
     const c = await company("instant", { sharesHours: true, takers: "both" });
     await api.sql("update public.service_types set online_crew_size = 2 where id = $1", [c.standard]);
     // Two hours shared by two is an hour on site, so 4:00 is offered.
@@ -290,9 +316,8 @@ describe.skipIf(!hasPostgrest)("booked straight away", { timeout: 120_000 }, () 
     expect((await press(c)).done, api.log()).toBeTruthy();
     const [v] = await visits(c);
     expect(v.minutes, "the one-person length is what is stored").toBe(120);
-    const crew = await crewOf(v.id);
-    expect(crew.map((r) => r.m).sort()).toEqual([c.anna.membershipId, c.bea.membershipId].sort());
-    expect(crew.filter((r) => r.p).map((r) => r.m)).toEqual([v.lead]);
+    expect(await crewOf(v.id)).toEqual([]);
+    expect(v.lead).toBeNull();
     // 10 to 11 each, half an hour clear either side.
     expect(await labelsOn(c, D)).toEqual(["12:00 PM", "1:00 PM", "2:00 PM", "3:00 PM", "4:00 PM"]);
   });
@@ -320,15 +345,17 @@ describe.skipIf(!hasPostgrest)("the office confirms each one", { timeout: 120_00
     expect(done.done?.held).toBe(true);
 
     const [v] = await visits(c);
-    expect(v).toMatchObject({ status: "pending", lead: c.anna.membershipId, online: true });
+    expect(v).toMatchObject({ status: "pending", lead: null, online: true });
     expect(await lifecycle(v.client), "still a lead until it is confirmed").toBe("lead");
     const mail = outbox.email.filter((m) => m.to === email);
     expect(mail.map((m) => m.subject)).toEqual([`${c.name} is holding your time`]);
     expect(mail[0].text).toContain("It isn't confirmed yet.");
     expect(mail[0].text).toContain(done.done!.when);
-    const told = await notices(c, "Online booking to confirm");
+    const told = await notices(c, "Online booking to confirm: Dana Whitfield");
     expect(told).toHaveLength(3);
     expect(told[0].body).toContain("The time is held.");
+    expect(told[0].body).toContain("put a cleaner on it");
+    expect(officeMail()).toHaveLength(3);
     // Held: nobody else can take it.
     expect(await press(c)).toEqual({ taken: true });
     expect(await labelsOn(c, D)).toEqual(["1:00 PM", "2:00 PM", "3:00 PM"]);
@@ -420,5 +447,65 @@ describe.skipIf(!hasPostgrest)("what is refused", { timeout: 120_000 }, () => {
     expect(await times(c)).toMatchObject({ days: [] });
     expect(await press(c)).toEqual({ taken: true });
     expect(await visits(c)).toEqual([]);
+  });
+});
+
+describe.skipIf(!hasPostgrest)("an online booking nobody is on yet", { timeout: 120_000 }, () => {
+  const movable = async (id: string) =>
+    (
+      await api.sql<import("@/lib/visit-move").MovableVisit>(
+        `select id, organization_id, client_id, series_id, scheduled_at, duration_minutes, status::text as status, archived_at,
+                assigned_to, service_type_label, service_type::text as service_type
+           from public.bookings where id = $1`,
+        [id],
+      )
+    )[0];
+
+  it("is on the dashboard as needing a cleaner until someone is put on it", async () => {
+    const c = await company("instant");
+    expect((await press(c)).done, api.log()).toBeTruthy();
+    const [v] = await visits(c);
+    const { collectNeedsYou } = await import("@/lib/needs-you");
+    const before = (await collectNeedsYou(c.org)).items.filter((it) => it.kind === "needs_cleaner");
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ key: `cleaner:${v.id}`, href: `/app/bookings/${v.id}` });
+    expect(before[0].title).toMatch(/^Dana Whitfield, .+: booked online, needs a cleaner$/);
+    expect(before[0].actions).toEqual([{ kind: "link", label: "Put a cleaner on it", href: `/app/bookings/${v.id}/edit` }]);
+
+    await addCrew(api.sql, c.org, v.id, c.anna.membershipId);
+    expect((await collectNeedsYou(c.org)).items.filter((it) => it.kind === "needs_cleaner")).toEqual([]);
+  });
+
+  it("the client can still move it themselves, to a time someone who takes online bookings is free", async () => {
+    const c = await company("instant");
+    expect((await press(c)).done, api.log()).toBeTruthy();
+    const [v] = await visits(c);
+    const { visitMoveState, visitOpenTimes, moveVisit } = await import("@/lib/visit-move");
+    const visit = await movable(v.id);
+    expect((await visitMoveState(visit)).allowed).toBe(true);
+    const open = await visitOpenTimes(visit, D);
+    expect(open.ok).toBe(true);
+    // Its own hold doesn't stand in its way: 9 and 11 are offered again,
+    // but not its current ten o'clock.
+    const onD = open.ok ? open.days.find((d) => d.ymd === D)?.times.map((t) => t.label) : [];
+    expect(onD).toEqual(HOURLY.filter((l) => l !== "10:00 AM"));
+
+    const moved = await moveVisit({ id: v.client, name: "Dana Whitfield" }, visit, regina(D, "14:00"));
+    expect(moved, api.log()).toMatchObject({ ok: true });
+    const [after] = await visits(c);
+    expect(Date.parse(after.at)).toBe(regina(D, "14:00"));
+    expect(after.lead).toBeNull();
+    const told = await notices(c, "Dana Whitfield moved a visit");
+    expect(told[0].body).toContain("Nobody is on it yet: put a cleaner on it.");
+    // Ten is free again, two isn't.
+    expect(await labelsOn(c, D)).toEqual(["9:00 AM", "10:00 AM", "11:00 AM"]);
+  });
+
+  it("an office-made visit with nobody on it still can't be moved by the client", async () => {
+    const c = await company("instant");
+    const client = await addClient(api.sql, c.org, "Phoned In");
+    const id = await addBooking(api.sql, c.org, client, { scheduledAt: new Date(regina(D, "13:00")).toISOString() });
+    const { visitMoveState } = await import("@/lib/visit-move");
+    expect(await visitMoveState(await movable(id))).toMatchObject({ allowed: false });
   });
 });

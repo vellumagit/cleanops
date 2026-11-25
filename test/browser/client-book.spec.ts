@@ -103,14 +103,15 @@ describe("booking a time from the client area", () => {
         [c.org],
       );
       expect(visits).toHaveLength(1);
-      expect(visits[0]).toMatchObject({ client_id: c.client, status: "confirmed", lead: c.anna.membershipId, online: true, address: "12 Test Street" });
+      // Nobody is put on it: the office chooses who (2026-11-25).
+      expect(visits[0]).toMatchObject({ client_id: c.client, status: "confirmed", lead: null, online: true, address: "12 Test Street" });
       expect(Date.parse(visits[0].at)).toBe(regina(D, "10:00"));
       expect((await sql<{ n: number }>("select count(*)::int as n from public.clients where organization_id = $1", [c.org]))[0].n).toBe(clientsBefore);
       // Their words reach the crew; the office is told where it came from.
       const note = await sql<{ body: string }>("select body from public.client_job_requests where booking_id = $1", [visits[0].id]);
       expect(note.map((n) => n.body)).toEqual(["Gate code 4411"]);
-      const told = await sql<{ body: string }>("select distinct body from public.notifications where organization_id = $1 and title = 'Booked online'", [c.org]);
-      expect(told.map((t) => t.body)).toEqual([expect.stringContaining("from their client account")]);
+      const told = await sql<{ body: string }>("select distinct body from public.notifications where organization_id = $1 and title = $2", [c.org, `New online booking: ${c.clientName}`]);
+      expect(told.map((t) => t.body)).toEqual([expect.stringContaining("from their client account. Nobody is on it yet: put a cleaner on it.")]);
 
       // It's in My cleans.
       await visit(stack, page, "/client/jobs");

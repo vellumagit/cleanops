@@ -17,7 +17,8 @@ export type NeedsYouKind =
   | "needs_price"
   | "tomorrow"
   | "series_drift"
-  | "needs_cover";
+  | "needs_cover"
+  | "needs_cleaner";
 
 export type NeedsYouAction =
   | { kind: "close_job"; label: string; bookingId: string }
@@ -378,8 +379,9 @@ export function buildNeedsYou(
     not_clocked_in: 1,
     over_hours: 2,
     tomorrow: 3,
-    // Not built here (lib/needs-you.ts adds it); ranked with tomorrow.
+    // Not built here (lib/needs-you.ts adds them); ranked with tomorrow.
     needs_cover: 3,
+    needs_cleaner: 3,
     series_drift: 4,
     needs_price: 5,
   };

@@ -2,13 +2,12 @@ import "server-only";
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { allowDbErrors } from "@/lib/supabase/query-guard";
-import { isDoubleBookingError } from "@/lib/crew-clash-text";
 import { runtimeKnowsZone } from "@/lib/tz-probe";
 import { zonedParts, zonedYmd } from "@/lib/wall-clock";
 import { wallClockColumns } from "@/lib/scheduled-local";
 import { timeLabel } from "@/lib/availability-week";
 import { loadOpenTimes } from "@/lib/open-times-load";
+import { onSiteMinutes } from "@/lib/open-times";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
 /**
@@ -20,11 +19,17 @@ import { getOrgTimezone } from "@/lib/org-timezone";
  *
  * The save trusts nothing the browser sent about the time. It works the
  * open times out again, on the server, and only books a start that is
- * still on the list. The visit is given to the cleaners with the fewest
- * jobs that day, through the same database call the office's crew save
- * uses, so the double-booking guard has the last word: of two visitors
- * pressing at the same moment, the database refuses one, the half-made
- * visit is removed, and that person is told the time was just taken.
+ * still on the list.
+ *
+ * Nobody is put on the visit (Brian, 2026-11-25: it "leaves the power with
+ * the office"). It goes in unstaffed, the office is emailed and the
+ * dashboard asks for a cleaner. A time is only offered while enough of the
+ * cleaners who take online bookings are free, and an unstaffed online
+ * visit holds the people it will need (lib/open-times.ts), so the calendar
+ * can't be sold twice over. The database saves online bookings one at a
+ * time per company and checks for room inside that (migration
+ * 20261125020000): of visitors pressing for the last free person at once,
+ * one gets it and the rest are told the time was just taken.
  *
  * What it writes is an ordinary visit. Everything the office already does
  * with one (confirm, move, cancel, invoice) works on it unchanged.
@@ -70,7 +75,7 @@ export async function publicOpenTimes(input: {
 }
 
 export type BookTimeResult =
-  | { ok: true; bookingId: string; status: "pending" | "confirmed"; when: string; crew: string[] }
+  | { ok: true; bookingId: string; status: "pending" | "confirmed"; when: string }
   /** The time is no longer open: someone took it, or the rules changed. */
   | { ok: false; taken: true }
   | { ok: false; taken?: false; error: string };
@@ -124,23 +129,18 @@ async function bookOnce(input: BookInput): Promise<BookTimeResult & { lost?: boo
   const slot = day?.times.find((t) => t.startMs === input.startMs);
   if (!day || !slot) return { ok: false, taken: true };
 
-  // Fewest jobs that day first; then by id, so the choice is steady.
-  const crew = [...slot.cleaners]
-    .sort((a, b) => (day.jobs[a] ?? 0) - (day.jobs[b] ?? 0) || a.localeCompare(b))
-    .slice(0, loaded.service.crewSize);
-  if (crew.length < loaded.service.crewSize) return { ok: false, taken: true };
-
   const scheduledAt = new Date(input.startMs).toISOString();
   const status = input.mode === "instant" ? "confirmed" : "pending";
-  // The visit first, with nobody on it: the guard checks a lead the moment
-  // the row exists, at the whole job's hours, where her share of a job two
-  // people split is half. The crew goes on together, below.
-  const { data: made, error: madeErr } = (await admin
-    .from("bookings")
-    .insert({
+  // With nobody on it: the office chooses who. Saved by the database one
+  // online booking at a time for this company, and only if the visits
+  // nobody is on yet still leave enough of the free cleaners for this one
+  // (migration 20261125020000). Checked from here after the insert, two
+  // visitors saving at once could both stay.
+  const endMs = input.startMs + onSiteMinutes(loaded.service.minutes, loaded.service.crewSize, loaded.shares) * 60_000;
+  const { data: madeId, error: madeErr } = (await admin.rpc("insert_online_booking_if_room" as never, {
+    p_row: {
       organization_id: orgId,
       client_id: input.client.id,
-      assigned_to: null,
       scheduled_at: scheduledAt,
       ...wallClockColumns(`${ymd}T${slot.hhmm}`, tz),
       duration_minutes: loaded.service.minutes,
@@ -151,47 +151,23 @@ async function bookOnce(input: BookInput): Promise<BookTimeResult & { lost?: boo
       total_cents: Math.max(0, loaded.service.priceCents ?? 0),
       address: input.address || null,
       booked_online_at: new Date().toISOString(),
-    } as never)
-    .select("id")
-    .single()) as unknown as { data: { id: string } | null; error: { message: string } | null };
-  if (madeErr || !made) {
-    console.error("[online-booking] insert failed:", madeErr?.message);
+    },
+    p_end: new Date(endMs).toISOString(),
+    p_free: slot.cleaners.length,
+    p_need: loaded.service.crewSize,
+    p_gap_minutes: Math.max(0, loaded.rules.gapMinutes),
+    p_shares: loaded.shares,
+  } as never)) as unknown as { data: string | null; error: { message: string } | null };
+  if (madeErr) {
+    console.error("[online-booking] save failed:", madeErr.message);
     return { ok: false, error: "We couldn't save your booking. Try again in a moment." };
   }
+  // No room: someone took the last free person a moment ago. Worked out
+  // again, in case someone else is still free then.
+  if (!madeId) return { ok: false, taken: true, lost: true };
+  const made = { id: madeId };
 
-  // 23P01: the database refusing a cleaner who is already booked then.
-  // Expected when two visitors press at once; answered below.
-  const { error: crewErr } = (await allowDbErrors(
-    ["23P01"],
-    admin.rpc("update_booking_assignments_v2" as never, {
-      p_organization_id: orgId,
-      p_booking_ids: [made.id],
-      p_booking_patch: { assigned_to: crew[0] },
-      p_assignees: crew.map((membershipId, i) => ({
-        organization_id: orgId,
-        booking_id: made.id,
-        membership_id: membershipId,
-        is_primary: i === 0,
-        split_index: null,
-        split_start_offset_minutes: null,
-        split_duration_minutes: null,
-        acceptance_status: "pending",
-        responded_at: null,
-        completed_at: null,
-      })),
-    } as never),
-  )) as unknown as { error: { code?: string | null; message: string } | null };
-  const lostTheRace = crewErr?.code === "23P01" || isDoubleBookingError(crewErr);
-  if (crewErr) {
-    // Nothing half-made is left on the calendar.
-    const { error: undoErr } = await admin.from("bookings").delete().eq("id", made.id).eq("organization_id", orgId);
-    if (undoErr) console.error("[online-booking] could not remove a half-made visit:", made.id, undoErr.message);
-    if (lostTheRace) return { ok: false, taken: true, lost: true };
-    console.error("[online-booking] crew save failed:", crewErr.message);
-    return { ok: false, error: "We couldn't save your booking. Try again in a moment." };
-  }
-
-  // A new visit with a crew: the job rules hear about it like any other.
+  // A new visit: the job rules hear about it like any other.
   const { syncJob } = await import("@/lib/job-sync");
   await syncJob(made.id, "booked_online");
 
@@ -214,10 +190,10 @@ async function bookOnce(input: BookInput): Promise<BookTimeResult & { lost?: boo
   }
 
   const when = whenLabel(input.startMs, tz);
-  await afterBooking({ organizationId: orgId, bookingId: made.id, status, crew, client: input.client, when, scheduledAt, service: loaded.service, address: input.address || null, via: input.via ?? "page" });
+  await afterBooking({ organizationId: orgId, bookingId: made.id, status, client: input.client, when, scheduledAt, service: loaded.service, address: input.address || null, via: input.via ?? "page" });
 
   for (const path of ["/app/bookings", "/app/calendar", "/app/scheduling", "/app", "/app/leads"]) revalidatePath(path);
-  return { ok: true, bookingId: made.id, status, when, crew };
+  return { ok: true, bookingId: made.id, status, when };
 }
 
 /**
@@ -288,7 +264,6 @@ async function afterBooking(b: {
   organizationId: string;
   bookingId: string;
   status: "pending" | "confirmed";
-  crew: string[];
   client: { id: string; name: string };
   when: string;
   scheduledAt: string;
@@ -306,37 +281,26 @@ async function afterBooking(b: {
 
   const where = b.via === "client_area" ? "from their client account" : "on your booking page";
 
-  // The office, in the app: the trace if every other message is lost.
+  // The office: in the app, on the phone, and by email (Brian, 2026-11-25:
+  // the bell alone was missed). Nobody is on the visit, so it says so.
   await attempt("office notice", async () => {
     const { notify } = await import("@/lib/notify");
     await notify({
       organizationId: b.organizationId,
       audience: "org-management",
       topic: "schedule",
-      title: b.status === "pending" ? "Online booking to confirm" : "Booked online",
+      title: b.status === "pending" ? `Online booking to confirm: ${b.client.name}` : `New online booking: ${b.client.name}`,
       body:
         b.status === "pending"
-          ? `${b.client.name} picked ${b.when} for ${b.service.name} ${where}. The time is held. Confirm it or decline it.`
-          : `${b.client.name} booked ${b.service.name} for ${b.when} ${where}.`,
+          ? `${b.client.name} picked ${b.when} for ${b.service.name} ${where}. The time is held. Confirm it or decline it, and put a cleaner on it.`
+          : `${b.client.name} booked ${b.service.name} for ${b.when} ${where}. Nobody is on it yet: put a cleaner on it.`,
       href: `/app/bookings/${b.bookingId}`,
+      channels: { email: true },
     });
   });
 
-  // The crew, the way the office's own new booking tells them.
-  await attempt("crew notice", async () => {
-    const { notifyBookingAssignment } = await import("@/lib/automations");
-    for (const membershipId of b.crew) {
-      await notifyBookingAssignment(b.organizationId, b.bookingId, membershipId, {
-        clientName: b.client.name,
-        scheduledAt: b.scheduledAt,
-        serviceType: b.service.category ?? "other",
-        address: b.address,
-      });
-    }
-  });
-
   await attempt("calendar", async () => {
-    const { createCalendarEvent, syncMemberCalendarEvents } = await import("@/lib/google-calendar");
+    const { createCalendarEvent } = await import("@/lib/google-calendar");
     const event = {
       id: b.bookingId,
       scheduled_at: b.scheduledAt,
@@ -347,7 +311,6 @@ async function afterBooking(b: {
       client_name: b.client.name,
     };
     await createCalendarEvent(b.organizationId, event);
-    await syncMemberCalendarEvents(b.bookingId, b.crew, event);
   });
 
   if (b.status === "confirmed") {

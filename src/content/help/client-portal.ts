@@ -80,15 +80,16 @@ With either "Yes", your page gains a **Book a clean** button. It asks one thing 
 What a booking does:
 
 - It is an ordinary visit on your calendar, marked **Booked online**, with the service's length and price from Settings → Services.
-- It is given to the ticked cleaner (or cleaners) with the fewest jobs that day. You can change the crew like any other visit, and they are notified the usual way.
-- Owners, admins and managers get a **Booked online** notification, or **Online booking to confirm** when you confirm each one. You can switch these off under the Schedule group in your [notification choices](/app/notifications/choices).
+- **Nobody is put on it.** You choose who does it. It stays on your dashboard as **booked online, needs a cleaner**, with a **Put a cleaner on it** button, until someone is on it.
+- A time is only offered while enough of your ticked cleaners are free then, and a visit nobody is on yet still holds a person's time. So two free cleaners means two visitors can have ten o'clock, and a third can't, even before you've put anyone on them.
+- Owners, admins and managers get a **New online booking** notification and an email, or **Online booking to confirm** when you confirm each one. They're in the Schedule group of your [notification choices](/app/notifications/choices): with Schedule switched off there, you still see them in the bell but get no email or phone alert.
 - Someone new is added to your **Leads** and becomes a client once the visit is confirmed. If the email is already on a client's profile, the visit goes on that client's record. The page tells the visitor nothing about that client.
 - What the visitor typed under "Anything we should know?" shows to the crew as the client's note for that visit.
 - A confirmed visitor always gets a confirmation email with a button to see or change the visit: your own confirmation if you have it switched on, a plain one from your company if you don't.
 
 **To confirm a held booking**, open it and set its status to **Confirmed**. The visitor gets the confirmation then. **To decline it**, set it to **Cancelled**, which gives the time back.
 
-If two people press the same time at the same moment, one gets it and the other is shown the times still open.
+If two people press the same time at the same moment and there's only room for one, whoever pressed first gets it and the other is shown the times still open.
 
 **Ask for a clean** is a short form: what they'd like, a day and time of day that suit them, the address, and their name, email and phone. It asks; it doesn't book. When someone sends it:
 
@@ -190,7 +191,7 @@ Every booking confirmation, day-before reminder, and reschedule email has a **Se
 
 If your booking page is published and **Can a visitor pick a time?** is switched on, the **New clean** tab opens the same picker your page has: the service, the day, the time. A signed-in client isn't asked for their name, email or phone. Their address is filled in from their record, and they can add a note.
 
-The visit goes on their own client record, not a new lead, with the service's price. It's booked straight away or held for you to confirm, exactly as your page is set. You get a "Booked online" notice that says it came from their client account.
+The visit goes on their own client record, not a new lead, with the service's price. It's booked straight away or held for you to confirm, exactly as your page is set. Nobody is put on it, as for any online booking: you get a "New online booking" notice and email saying it came from their client account, and it's on your dashboard until you put a cleaner on it.
 
 A link under the picker, **Ask for a clean instead**, still opens the request form below. When booking online is off, New clean is the request form, as before.
 

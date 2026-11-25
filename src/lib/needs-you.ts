@@ -118,9 +118,15 @@ export async function collectNeedsYou(
   const byId = new Map<string, Row>();
   for (const r of [...(live ?? []), ...(unpriced ?? [])]) byId.set(r.id, r);
   const ids = [...byId.keys()];
-  // Nothing live in the window. A visit that needs cover later this week
-  // is still worth its line.
-  if (ids.length === 0) return { items: await needsCoverItems(organizationId, tz, now, new Map()), tz };
+  // Nothing live in the window. A visit that needs cover later this week,
+  // or an online booking nobody is on yet, is still worth its line.
+  if (ids.length === 0) {
+    const [cleaner, cover] = await Promise.all([
+      needsCleanerItems(organizationId, tz, now, new Map()),
+      needsCoverItems(organizationId, tz, now, new Map()),
+    ]);
+    return { items: [...cleaner, ...cover], tz };
+  }
 
   type CrewRow = {
     booking_id: string;
@@ -243,13 +249,95 @@ export async function collectNeedsYou(
   const driftItems = drift
     .map((d) => seriesDriftItem(d, tz))
     .filter((it) => (snoozed.get(it.key) ?? 0) <= now);
-  const coverItems = await needsCoverItems(organizationId, tz, now, snoozed);
+  const [coverItems, cleanerItems] = await Promise.all([
+    needsCoverItems(organizationId, tz, now, snoozed),
+    needsCleanerItems(organizationId, tz, now, snoozed),
+  ]);
 
   // Cover and drift sit with tomorrow's problems: before money, after
   // anything live.
   const money = items.filter((it) => it.kind === "needs_price");
   const rest = items.filter((it) => it.kind !== "needs_price");
-  return { items: [...rest, ...coverItems, ...driftItems, ...money], tz };
+  // A visit tomorrow already has its own line (and is in the 6 PM check),
+  // which says nobody is assigned; one line per visit.
+  const tomorrowKeys = new Set(rest.filter((it) => it.kind === "tomorrow").map((it) => it.key.replace(/^tomorrow:/, "")));
+  const cleanerOnly = cleanerItems.filter((it) => !tomorrowKeys.has(it.key.replace(/^cleaner:/, "")));
+  return { items: [...rest, ...cleanerOnly, ...coverItems, ...driftItems, ...money], tz };
+}
+
+/**
+ * Visits booked online that nobody is on yet, however far ahead. An online
+ * booking is left for the office to staff (lib/online-booking.ts), so each
+ * one stays on the list until someone is put on it: it's the office's
+ * to-do, not a warning that comes due. Never throws.
+ */
+async function needsCleanerItems(
+  organizationId: string,
+  tz: string,
+  now: number,
+  snoozed: Map<string, number>,
+): Promise<NeedsYouItem[]> {
+  try {
+    const db = createSupabaseAdminClient();
+    const { data, error } = (await db
+      .from("bookings")
+      .select("id, scheduled_at, status, booked_online_at, service_type_label, client:clients ( name )" as never)
+      .eq("organization_id", organizationId)
+      .not("booked_online_at" as never, "is" as never, null as never)
+      .is("assigned_to", null)
+      .in("status", ["pending", "confirmed"])
+      .gte("scheduled_at", new Date(now).toISOString())
+      .order("scheduled_at", { ascending: true })
+      .limit(40)) as unknown as {
+      data: Array<{
+        id: string;
+        scheduled_at: string;
+        status: string;
+        booked_online_at: string;
+        service_type_label: string | null;
+        client: { name: string | null } | null;
+      }> | null;
+      error: { message: string } | null;
+    };
+    if (error) throw new Error(error.message);
+    const rows = data ?? [];
+    if (rows.length === 0) return [];
+    // A crew row means someone is on it, whatever assigned_to says.
+    const { data: crew, error: crewErr } = (await db
+      .from("booking_assignees")
+      .select("booking_id")
+      .in("booking_id", rows.map((r) => r.id))) as unknown as { data: Array<{ booking_id: string }> | null; error: { message: string } | null };
+    if (crewErr) throw new Error(crewErr.message);
+    const staffed = new Set((crew ?? []).map((r) => r.booking_id));
+    return rows
+      .filter((r) => !staffed.has(r.id))
+      .map((r): NeedsYouItem => {
+        const when = new Date(r.scheduled_at).toLocaleString("en-US", {
+          timeZone: tz,
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        const href = `/app/bookings/${r.id}`;
+        const who = r.client?.name ?? "A client";
+        return {
+          key: `cleaner:${r.id}`,
+          kind: "needs_cleaner",
+          title: `${who}, ${when}: booked online, needs a cleaner`,
+          body: `${r.service_type_label ?? "A clean"}${r.status === "pending" ? ", waiting for you to confirm it" : ""}. Nobody is on it yet.`,
+          href,
+          atMs: new Date(r.scheduled_at).getTime(),
+          alert: false,
+          actions: [{ kind: "link", label: "Put a cleaner on it", href: `/app/bookings/${r.id}/edit` }],
+        };
+      })
+      .filter((it) => (snoozed.get(it.key) ?? 0) <= now);
+  } catch (err) {
+    console.error("[needs-you] could not read online bookings that need a cleaner:", err);
+    return [];
+  }
 }
 
 /**

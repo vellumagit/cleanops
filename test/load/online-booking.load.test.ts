@@ -3,9 +3,14 @@
  * (roadmap phase 3).
  *
  * The page lists a time as open to everyone looking at it. What matters is
- * what happens when several of them press at the same instant: one visit
- * per free cleaner, never two on one cleaner, and nothing half-made left
- * behind for the losers.
+ * what happens when several of them press at the same instant: never more
+ * visits than there are free cleaners, and nothing half-made left behind
+ * for the losers.
+ *
+ * Since 2026-11-25 nobody is put on an online booking (the office chooses
+ * who), so the database's double-booking guard isn't what decides: each
+ * unstaffed visit holds a person's time, and of a crowd pressing for the
+ * last free person, the one booked first keeps it (lib/online-booking.ts).
  *
  * Needs a real server: on PGlite each query waits for the one before, so
  * "at once" never happens.
@@ -108,14 +113,12 @@ const booked = (s: { org: string }) =>
        from public.bookings b where b.organization_id = $1 order by b.created_at`,
     [s.org],
   );
-/** Pairs of visits that put one cleaner in two places at once. */
-const clashes = (s: { org: string }) =>
+/** Pairs of the company's visits whose times overlap. */
+const overlaps = (s: { org: string }) =>
   api.sql<{ n: number }>(
     `select count(*)::int as n
-       from public.booking_assignees x
-       join public.bookings bx on bx.id = x.booking_id
-       join public.booking_assignees y on y.membership_id = x.membership_id and y.booking_id > x.booking_id
-       join public.bookings by on by.id = y.booking_id
+       from public.bookings bx
+       join public.bookings by on by.organization_id = bx.organization_id and by.id > bx.id
       where bx.organization_id = $1 and bx.status <> 'cancelled' and by.status <> 'cancelled'
         and bx.scheduled_at < by.scheduled_at + make_interval(mins => by.duration_minutes)
         and by.scheduled_at < bx.scheduled_at + make_interval(mins => bx.duration_minutes)`,
@@ -130,16 +133,14 @@ describe.skipIf(!ready)("visitors taking the same time at once, on a real server
     expect(results.filter((r) => !r.ok && r.taken)).toHaveLength(11);
     const rows = await booked(s);
     expect(rows, "nothing half-made left behind").toHaveLength(1);
-    expect(rows[0]).toMatchObject({ lead: s.crew[0].membershipId, crew: 1 });
+    expect(rows[0], "left for the office to staff").toMatchObject({ lead: null, crew: 0 });
   });
 
-  it("three cleaners, twelve visitors, one time: three visits, one cleaner each", async () => {
+  it("three cleaners, twelve visitors, one time: no more than three visits", async () => {
     const s = await shop("Three Cleaners", 3);
     const results = await rush(s, 12, at(dayOut(3), "10:00"));
     const rows = await booked(s);
-    expect((await clashes(s))[0].n, "nobody is in two places at once").toBe(0);
-    expect(rows.every((r) => r.lead && r.crew === 1), "every visit left has its cleaner").toBe(true);
-    expect(new Set(rows.map((r) => r.lead)).size).toBe(rows.length);
+    expect(rows.every((r) => !r.lead && r.crew === 0), "all left for the office").toBe(true);
     expect(rows.length).toBe(results.filter((r) => r.ok).length);
     // Every cleaner should end up with one. Fewer means a visitor was told
     // "taken" while someone was still free: allowed (they are shown the
@@ -149,12 +150,11 @@ describe.skipIf(!ready)("visitors taking the same time at once, on a real server
     expect(rows.length).toBeLessThanOrEqual(3);
   });
 
-  it("a job for two, four cleaners, ten visitors: at most two visits, each with its own pair", async () => {
+  it("a job for two, four cleaners, ten visitors: at most two visits", async () => {
     const s = await shop("Pairs", 4, { crewSize: 2 });
-    await rush(s, 10, at(dayOut(3), "13:00"));
+    const results = await rush(s, 10, at(dayOut(3), "13:00"));
     const rows = await booked(s);
-    expect((await clashes(s))[0].n).toBe(0);
-    expect(rows.every((r) => r.crew === 2), "no visit is left with half a crew").toBe(true);
+    expect(rows.length).toBe(results.filter((r) => r.ok).length);
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows.length).toBeLessThanOrEqual(2);
   });
@@ -170,7 +170,7 @@ describe.skipIf(!ready)("visitors taking the same time at once, on a real server
         online.bookTimeOnline({ organizationId: s.org, mode: "instant", serviceId: s.service, startMs: at(day, `${String(9 + i).padStart(2, "0")}:00`), client: { id, name: `N${i}` }, address: "1 Road", note: "" }),
       ),
     );
-    expect((await clashes(s))[0].n).toBe(0);
+    expect((await overlaps(s))[0].n, "one cleaner can't be at two of them").toBe(0);
     const rows = await booked(s);
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows.length).toBeLessThanOrEqual(4); // 9, 11, 13, 15 at the very most

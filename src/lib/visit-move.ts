@@ -24,7 +24,10 @@ import { clientBookingActions, MAX_SELF_MOVES, occurrenceDate, SKIP_AUTO_APPLY_H
  *     requests only, gets "ask to move" instead: a person answers.
  *   - the visit is still ahead by the company's notice period.
  *   - it has a crew, all on the visit's own times. The same people keep the
- *     job; a time is open when every one of them is free.
+ *     job; a time is open when every one of them is free. Or it was booked
+ *     online and nobody is on it yet (online bookings are left for the
+ *     office to staff): then a time is open as it was when it was booked,
+ *     when enough of the cleaners who take online bookings are free.
  *   - it hasn't already been moved by the client a few times.
  *
  * The new time comes from the same open-times engine the booking page
@@ -74,15 +77,25 @@ export async function clientChangeRules(organizationId: string, admin: Admin = c
   }
 }
 
-type Crew = { ids: string[]; ownTimes: boolean; dividesHours: boolean };
+/** Who is on the visit. `unstaffedNeed`: booked online, nobody on it yet, and how many it needs. */
+type Crew = { ids: string[]; ownTimes: boolean; dividesHours: boolean; unstaffedNeed: number | null };
 
 async function crewOf(visit: MovableVisit, admin: Admin): Promise<Crew> {
   const [rowsRes, bookingRes] = await Promise.all([
     admin.from("booking_assignees").select("membership_id, split_start_offset_minutes, split_duration_minutes").eq("booking_id", visit.id) as unknown as Promise<{
       data: Array<{ membership_id: string; split_start_offset_minutes: number | null; split_duration_minutes: number | null }> | null;
     }>,
-    admin.from("bookings").select("splits, divide_hours_evenly" as never).eq("id", visit.id).maybeSingle() as unknown as Promise<{
-      data: { splits: unknown; divide_hours_evenly: boolean | null } | null;
+    admin
+      .from("bookings")
+      .select("splits, divide_hours_evenly, booked_online_at, service:service_types ( online_crew_size )" as never)
+      .eq("id", visit.id)
+      .maybeSingle() as unknown as Promise<{
+      data: {
+        splits: unknown;
+        divide_hours_evenly: boolean | null;
+        booked_online_at: string | null;
+        service: { online_crew_size: number | null } | null;
+      } | null;
     }>,
   ]);
   const rows = rowsRes.data ?? [];
@@ -92,6 +105,8 @@ async function crewOf(visit: MovableVisit, admin: Admin): Promise<Crew> {
     ids,
     ownTimes: (Array.isArray(splits) && splits.length > 0) || rows.some((r) => r.split_start_offset_minutes != null || r.split_duration_minutes != null),
     dividesHours: bookingRes.data?.divide_hours_evenly === true,
+    unstaffedNeed:
+      ids.length === 0 && bookingRes.data?.booked_online_at ? Math.max(1, bookingRes.data.service?.online_crew_size ?? 1) : null,
   };
 }
 
@@ -124,7 +139,9 @@ export async function visitMoveState(visit: MovableVisit, now: number = Date.now
   }
   if (!visit.duration_minutes || visit.duration_minutes <= 0) return no("To move this visit, ask us and we'll find a time with you.");
   const crew = await crewOf(visit, admin);
-  if (crew.ids.length === 0 || crew.ownTimes) return no("To move this visit, ask us and we'll find a time with you.");
+  if ((crew.ids.length === 0 && crew.unstaffedNeed == null) || crew.ownTimes) {
+    return no("To move this visit, ask us and we'll find a time with you.");
+  }
   if ((await movesSoFar(visit, admin)) >= MAX_SELF_MOVES) {
     return no("This visit has been moved a few times already. To move it again, call us.");
   }
@@ -141,7 +158,13 @@ export async function visitOpenTimes(
   if (!state.allowed) return { ok: false, error: state.reason };
   const loaded = await loadOpenTimes({
     organizationId: visit.organization_id,
-    visit: { bookingId: visit.id, durationMinutes: visit.duration_minutes ?? 0, crewIds: state.crew.ids, dividesHours: state.crew.dividesHours },
+    visit: {
+      bookingId: visit.id,
+      durationMinutes: visit.duration_minutes ?? 0,
+      crewIds: state.crew.ids,
+      dividesHours: state.crew.dividesHours,
+      crewSize: state.crew.unstaffedNeed ?? undefined,
+    },
     fromYmd,
     days: 14,
     now,
@@ -173,7 +196,13 @@ export async function moveVisit(client: { id: string; name: string }, visit: Mov
   const ymd = zonedYmd(new Date(startMs), tz);
   const loaded = await loadOpenTimes({
     organizationId: orgId,
-    visit: { bookingId: visit.id, durationMinutes: visit.duration_minutes ?? 0, crewIds: state.crew.ids, dividesHours: state.crew.dividesHours },
+    visit: {
+      bookingId: visit.id,
+      durationMinutes: visit.duration_minutes ?? 0,
+      crewIds: state.crew.ids,
+      dividesHours: state.crew.dividesHours,
+      crewSize: state.crew.unstaffedNeed ?? undefined,
+    },
     fromYmd: ymd,
     days: 1,
     now,
@@ -246,7 +275,7 @@ export async function moveVisit(client: { id: string; name: string }, visit: Mov
       topic: "clients",
       type: "client_request",
       title: `${client.name} moved a visit`,
-      body: `${visit.service_type_label ?? visit.service_type.replace(/_/g, " ")}: from ${was} to ${when}. The same crew is on it.`,
+      body: `${visit.service_type_label ?? visit.service_type.replace(/_/g, " ")}: from ${was} to ${when}. ${state.crew.ids.length > 0 ? "The same crew is on it." : "Nobody is on it yet: put a cleaner on it."}`,
       href: `/app/bookings/${visit.id}`,
     });
   });

@@ -15,7 +15,11 @@
  *   - the whole visit fits inside one stretch of opening hours;
  *   - enough of the cleaners who take online bookings are free for the whole
  *     visit: not off that day, inside the hours they said they work, and
- *     with no other job within the gap the company leaves between jobs.
+ *     with no other job within the gap the company leaves between jobs;
+ *   - and, of those, enough are left once visits booked online that nobody
+ *     is on yet have each kept the people they will need. An online booking
+ *     is left for the office to staff (2026-11-25), so until it is, it holds
+ *     a person's time without naming whose.
  *
  * How long each person is on site follows the rule the double-booking guard
  * uses: when a crew shares a job's hours, N people are each there for the
@@ -32,6 +36,9 @@
 export type Hours = { start: string; end: string };
 
 export type Busy = { startMs: number; endMs: number };
+
+/** A visit booked online that nobody is on yet: it holds `need` people for this window. */
+export type Held = Busy & { need: number };
 
 export type OpenTimeRules = {
   /** Opening hours by weekday, 0 = Sunday. A missing or empty day is closed. */
@@ -65,7 +72,8 @@ export type OpenTime = {
   startMs: number;
   /** The wall-clock start, "09:30". */
   hhmm: string;
-  /** Who could take it, in the order given. At least `crewSize` of them. */
+  /** Who is free then, in the order given, before visits nobody is on yet
+   *  take their share. At least `crewSize` more than those visits need. */
   cleaners: string[];
 };
 
@@ -130,6 +138,8 @@ export function openTimesForDay(input: {
   sharesHours: boolean;
   /** The cleaners who take online bookings. */
   cleaners: EngineCleaner[];
+  /** Visits booked online that nobody is on yet, around this day. */
+  held?: Held[];
 }): OpenTimesResult {
   const none = (reason: NoTimesReason): OpenTimesResult => ({ times: [], reason });
   const { rules } = input;
@@ -172,7 +182,8 @@ export function openTimesForDay(input: {
         .filter((c) => c.hours === null || c.hours.some((h) => start >= h.startMs && end <= h.endMs))
         .filter((c) => !c.busy.some((b) => b.startMs < end + gap && b.endMs > start - gap))
         .map((c) => c.id);
-      if (free.length < crewSize) continue;
+      // Visits nobody is on yet keep the people they will need.
+      if (free.length - heldPeopleDuring(input.held ?? [], start, end, gap) < crewSize) continue;
       seen.add(start);
       times.push({ startMs: start, hhmm: input.clock(start), cleaners: free });
     }
@@ -181,6 +192,27 @@ export function openTimesForDay(input: {
   if (!anyCandidate) return none("closed"); // open, but never for long enough to fit the visit
   if (!anyAfterNotice) return none("too_soon");
   return none("full");
+}
+
+/**
+ * How many people visits nobody is on yet need at once, at the busiest
+ * moment of [startMs, endMs), the gap included: whoever does one can't
+ * start the next until the gap has passed. The busiest moment, not the sum:
+ * a visit from 9 to 11 and one from 11 to 1 can be one person's day, which
+ * leaves the other free for 10 to 12.
+ */
+export function heldPeopleDuring(held: Held[], startMs: number, endMs: number, gapMs: number): number {
+  // Each held visit as [start, end + gap); this visit as [start, end + gap).
+  const hi = endMs + gapMs;
+  const near = held.filter((h) => h.startMs < hi && h.endMs + gapMs > startMs);
+  if (near.length === 0) return 0;
+  const points = [startMs, ...near.map((h) => h.startMs).filter((t) => t > startMs && t < hi)];
+  let most = 0;
+  for (const t of points) {
+    const at = near.filter((h) => h.startMs <= t && t < h.endMs + gapMs).reduce((n, h) => n + Math.max(1, Math.floor(h.need)), 0);
+    if (at > most) most = at;
+  }
+  return most;
 }
 
 /** A sentence for a day with no open times, for the office's preview. */
