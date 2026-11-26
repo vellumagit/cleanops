@@ -362,7 +362,11 @@ Decisions made while building:
 Left out of phase 4:
 
 - A visit with nobody on it, or with people on their own split times, can't
-  be moved by the client.
+  be moved by the client. Except (since 2026-11-25) a visit booked online
+  that nobody is on yet: it moves against the pool of cleaners who take
+  online bookings (`unstaffedNeed` in `src/lib/visit-move.ts`, tested in
+  `test/db/online-booking.api.test.ts`). An office-made visit with nobody
+  on it still can't.
 - A moved visit in a series is one visit moved; the series is untouched.
 - Text messages don't carry the link; emails do.
 - No fee or policy text for late changes.

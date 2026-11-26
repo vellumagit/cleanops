@@ -168,7 +168,8 @@ Notes can be up to 1,000 characters. A note that looks like a card number is ref
 - The times offered are the ones the visit's own crew is free, inside your opening hours, with your gap either side of their other jobs. The same people stay on the job.
 - The visit moves at once. Owners, admins and managers get a "moved a visit" notification, the crew gets the usual rescheduled notice, and the calendars follow.
 - It is on the booking's record as *Moved their visit from … to …*.
-- It isn't offered when the visit is closer than your notice period, has nobody assigned, has people on their own split times, or has already been moved three times by the client. The page then says to ask or call.
+- A visit booked online that nobody is on yet can be moved too. A time is offered when enough of your ticked cleaners are free, the same as when it was booked, and the "moved a visit" notice reminds you nobody is on it yet.
+- It isn't offered when the visit is closer than your notice period, has nobody assigned (unless it was booked online), has people on their own split times, or has already been moved three times by the client. The page then says to ask or call.
 
 **Skip a visit.** What happens depends on how soon the visit is. The 48 hours below is the starting notice period; you can change it under **Changes and cancellations** in **Settings → Clients → Online booking**:
 
