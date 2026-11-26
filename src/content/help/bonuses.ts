@@ -73,7 +73,7 @@ Click the pencil on a bonus to change its amount or reason, or to **Delete** it.
 
 **Why did nobody get an efficiency bonus this week?** Efficiency bonuses are never awarded automatically. Press **Efficiency bonuses** or **Compute all** on the Bonuses page. Check that **Enable efficiency bonuses** is ticked in **Settings → Bonus rules**.
 
-**Can pressing Compute twice pay someone twice?** For reviews, no: anyone who already has a review bonus overlapping the window is skipped. For efficiency, pressing again the same day doesn't duplicate, but pressing on a later day checks a new window and can award the same person again. Run efficiency bonuses once per period.
+**Can pressing Compute twice pay someone twice?** No. Anyone who already has a bonus of that kind whose period reaches into the window is skipped, whether you press again the same day or a week later. Once their last bonus's period is entirely before the window, they can earn the next one. A review bonus and an efficiency bonus are separate: having one doesn't stop the other.
 
 **Will the bonus be in their next paycheque?** Yes, if they're paid as an employee and the bonus is pending with a period end inside the pay period being run. It isn't included if it was dated into a period already run, if they're a subcontractor, or if they've left.
 

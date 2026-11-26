@@ -308,13 +308,16 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
     byEmployee.set(w.employeeId, bucket);
   }
 
-  // Check for existing efficiency bonuses in this period
+  // Any efficiency bonus whose period reaches into this window, not only one
+  // with the very same dates. The window is the last N days, so pressing the
+  // button again on a later day gave a new pair of dates, matched nothing,
+  // and paid the same people again (fix-later #92). Same rule as the review
+  // bonus above.
   const { data: existing, error: existingErr } = await supabase
     .from("bonuses")
     .select("employee_id")
     .eq("organization_id", membership.organization_id)
-    .eq("period_start", periodStartDate)
-    .eq("period_end", periodEndDate)
+    .gte("period_end", periodStartDate)
     .eq("bonus_type" as never, "efficiency" as never);
 
   if (existingErr) return { ok: false, error: existingErr.message };

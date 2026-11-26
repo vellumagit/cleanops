@@ -418,7 +418,7 @@ fixed, update its guide in the same commit.
 
 | # | Sev | What's wrong | Where |
 |---|---|---|---|
-| 92 | High | **Efficiency bonuses can pay twice.** The duplicate check matches only an identical start and end date, so pressing **Efficiency bonuses** or **Compute all** on another day pays the same people again. Review bonuses had the same fault and were fixed with an overlap check; efficiency wasn't. | bonuses actions; `help/bonuses.ts` warns about it |
+| 92 | FIXED 26 Nov (was High) | **Efficiency bonuses can pay twice.** The duplicate check matches only an identical start and end date, so pressing **Efficiency bonuses** or **Compute all** on another day pays the same people again. Review bonuses had the same fault and were fixed with an overlap check; efficiency wasn't. | bonuses actions; `help/bonuses.ts` warns about it |
 | 93 | High (Security, unverified) | The contractor detail page and its CSV export don't check the manager "On-call pool & subcontractor pay" access switch, though the list page does. A restricted manager with a direct link can probably read a contractor's pay. | `app/app/payroll/contractors/[contactId]` |
 | 94 | Med | Client statements count draft and voided invoices in Total charged and Balance owing. | `app/app/clients/[id]/statement` |
 | 95 | Med | A manager without invoicing access still sees job prices on the dashboard (Today's jobs, and "New booking" lines in Recent activity). | `app/app/page.tsx` |

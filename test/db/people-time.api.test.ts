@@ -757,6 +757,51 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     expect(await as(c.owner, () => bonuses.computeEfficiencyBonusesAction())).toEqual({ ok: false, error: "The efficiency bonus engine is currently disabled." });
   });
 
+  /**
+   * Fix-later #92. The duplicate check matched only the very same dates, and
+   * the window is the last N days, so pressing Efficiency bonuses (or Compute
+   * all) on another day gave a new pair of dates and paid the same people
+   * again. Same rule as review bonuses now: a period reaching into this
+   * window counts as paid.
+   */
+  it("pressing Efficiency bonuses again a few days later doesn't pay twice; once the earlier period is behind the window, it pays again", async () => {
+    const c = await company();
+    await rule(c);
+    await finishedJob(c, 240, [[c.anna, 120]]);
+    expect(await as(c.owner, () => bonuses.computeEfficiencyBonusesAction()), api.log()).toMatchObject({ ok: true, created: 1 });
+    // The same press three days ago would have left this period on the row.
+    await api.sql(
+      "update public.bonuses set period_start = period_start - 3, period_end = period_end - 3 where organization_id = $1 and bonus_type = 'efficiency'",
+      [c.org],
+    );
+    expect(await as(c.owner, () => bonuses.computeEfficiencyBonusesAction())).toEqual({ ok: true, created: 0, skipped: 1 });
+    expect((await bonusesOf(c)).filter((b) => b.bonus_type === "efficiency")).toHaveLength(1);
+
+    // Compute all presses both: still nobody paid twice.
+    const [review, efficiency] = await Promise.all([
+      as(c.owner, () => bonuses.computeBonusesAction()),
+      as(c.owner, () => bonuses.computeEfficiencyBonusesAction()),
+    ]);
+    expect(review).toMatchObject({ ok: true });
+    expect(efficiency).toEqual({ ok: true, created: 0, skipped: 1 });
+
+    // A review bonus in the window doesn't count as an efficiency bonus paid.
+    await api.sql("delete from public.bonuses where organization_id = $1 and bonus_type = 'efficiency'", [c.org]);
+    await api.sql(
+      `insert into public.bonuses (organization_id, employee_id, period_start, period_end, amount_cents, bonus_type, reason)
+       values ($1, $2, current_date - 30, current_date, 5000, 'review', 'Avg 5.00 across 2 reviews (last 30d)')`,
+      [c.org, c.anna.membershipId],
+    );
+    expect(await as(c.owner, () => bonuses.computeEfficiencyBonusesAction())).toMatchObject({ ok: true, created: 1 });
+
+    // A bonus for a period that ended before this window began doesn't block a new one.
+    await api.sql(
+      "update public.bonuses set period_start = period_start - 60, period_end = period_end - 60 where organization_id = $1 and bonus_type = 'efficiency'",
+      [c.org],
+    );
+    expect(await as(c.owner, () => bonuses.computeEfficiencyBonusesAction())).toMatchObject({ ok: true, created: 1 });
+  });
+
   it("two cleaners who each worked their half of a divided job saved nothing", async () => {
     const c = await company();
     await rule(c);
