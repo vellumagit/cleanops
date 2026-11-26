@@ -172,6 +172,76 @@ describe.skipIf(!hasPostgrest)("review links", { timeout: 90_000 }, () => {
     expect(await reviewsFor(s.job)).toEqual([{ rating: 5, employee_id: s.anna.membershipId }]);
   });
 
+  /**
+   * One review per visit (fix-later #100). The portal offers "Leave a
+   * review" on every finished visit and the request is sent after every job,
+   * but the page kept one per client, ever: the second visit was refused.
+   */
+  it("a client reviews each visit once: a second visit can be reviewed, the same visit can't twice", async () => {
+    const s = await finishedJob();
+    const nextWeek = await addBooking(api.sql, s.org, s.client, {
+      scheduledAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+      status: "completed",
+    });
+    expect(await send(tokens.reviewLinkToken("booking", s.job), "booking", s.job), api.log()).toEqual({ success: true, error: null });
+    expect(await send(tokens.reviewLinkToken("booking", nextWeek), "booking", nextWeek, 4), api.log()).toEqual({
+      success: true,
+      error: null,
+    });
+    expect(await reviewsFor(nextWeek)).toEqual([{ rating: 4, employee_id: null }]);
+
+    const again = await send(tokens.reviewLinkToken("booking", nextWeek), "booking", nextWeek);
+    expect(again).toEqual({ success: false, error: "You've already reviewed this clean. Thank you!" });
+    expect(await reviewsFor(nextWeek)).toHaveLength(1);
+  });
+
+  it("the visit's invoice link counts as the same visit", async () => {
+    const s = await finishedJob();
+    expect((await send(tokens.reviewLinkToken("booking", s.job), "booking", s.job)).success, api.log()).toBe(true);
+    const [inv] = await api.sql<{ id: string }>(
+      `insert into public.invoices (organization_id, client_id, booking_id, status, amount_cents, paid_at)
+       values ($1, $2, $3, 'paid', 14000, now()) returning id`,
+      [s.org, s.client, s.job],
+    );
+    expect((await send(tokens.reviewLinkToken("invoice", inv.id), "invoice", inv.id)).success).toBe(false);
+    expect(await reviewsFor(s.job)).toHaveLength(1);
+  });
+
+  it("an invoice with no visit takes one review, and next month's invoice takes its own", async () => {
+    const s = await finishedJob();
+    const invoice = async (paidDaysAgo: number) =>
+      (
+        await api.sql<{ id: string }>(
+          `insert into public.invoices (organization_id, client_id, status, amount_cents, paid_at)
+           values ($1, $2, 'paid', 56000, now() - make_interval(days => $3)) returning id`,
+          [s.org, s.client, paidDaysAgo],
+        )
+      )[0].id;
+    const october = await invoice(30);
+    expect(await send(tokens.reviewLinkToken("invoice", october), "invoice", october), api.log()).toEqual({ success: true, error: null });
+    expect((await send(tokens.reviewLinkToken("invoice", october), "invoice", october)).success).toBe(false);
+
+    const november = await invoice(1);
+    expect(await send(tokens.reviewLinkToken("invoice", november), "invoice", november), api.log()).toEqual({ success: true, error: null });
+    const theirs = await api.sql<{ n: number }>(
+      "select count(*)::int as n from public.reviews where client_id = $1 and booking_id is null",
+      [s.client],
+    );
+    expect(theirs[0].n).toBe(2);
+  });
+
+  it("a client who already holds two reviews can still review a new visit, once", async () => {
+    const s = await finishedJob();
+    // Added by hand by the office, as some production clients have.
+    await api.sql("insert into public.reviews (organization_id, client_id, rating) values ($1, $2, 5), ($1, $2, 4)", [
+      s.org,
+      s.client,
+    ]);
+    expect(await send(tokens.reviewLinkToken("booking", s.job), "booking", s.job), api.log()).toEqual({ success: true, error: null });
+    expect((await send(tokens.reviewLinkToken("booking", s.job), "booking", s.job)).success).toBe(false);
+    expect(await reviewsFor(s.job)).toHaveLength(1);
+  });
+
   it("the existing rules still hold: no review of a job that is not finished", async () => {
     const s = await finishedJob();
     await api.sql("update public.bookings set status = 'confirmed' where id = $1", [s.job]);

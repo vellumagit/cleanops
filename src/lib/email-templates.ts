@@ -476,7 +476,7 @@ export function senderVerificationEmail(args: {
  *
  * This is the SOLLOS-hosted form; goes to /review/<token>. Captures
  * an employee-scoped star rating + comment. Distinct from the Google
- * review ask (gbpReviewRequestEmail) which only fires 24h after the
+ * review ask (gbpReviewRequestEmail) which only fires 48h after the
  * client's first job and is one-and-done per customer.
  */
 export function reviewRequestEmail(args: {
@@ -528,7 +528,7 @@ export function reviewRequestEmail(args: {
 // ---------------------------------------------------------------------------
 
 /**
- * First-time Google review ask. Sent ~24h after the client's FIRST
+ * First-time Google review ask. Sent ~48h after the client's FIRST
  * completed job (per-client, not per-booking). The redirect URL is a
  * Sollos /r/g/<token> that logs the click and 302s to the org's
  * google_review_url — clicking is our stop signal so reminders cease.

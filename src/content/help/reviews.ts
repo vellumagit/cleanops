@@ -35,7 +35,7 @@ Rules the page follows:
 
 - A review can only be left for a **completed** job.
 - A review link stops working **60 days** after the job.
-- **Sollos keeps one review per client.** Once a client has left a review, opening any later review link shows the review they already left, plus a **Share on Google too** button if it was 4 or 5 stars.
+- **Sollos keeps one review per visit.** A client can review each finished visit once, whether from the emailed link, the invoice's link or their portal. Opening the link for a visit they've already reviewed shows the review they left, plus a **Share on Google too** button if it was 4 or 5 stars. An invoice that isn't for one visit (a monthly invoice, say) takes one review of its own.
 - The review is credited to the cleaner assigned to that job.
 
 ## Being told about new reviews
@@ -73,7 +73,7 @@ Owners and admins see a pencil on each row. It opens **Edit review**, where you 
 
 **A client says the review link doesn't work.** Links stop working 60 days after the job. Links only work for completed jobs. If the client has already left a review, the page shows that review instead of a new form.
 
-**Can a client leave more than one review?** Not through the review link. Sollos keeps one review per client, and later links show the one they already left. You can add more by hand with **New review**.
+**Can a client leave more than one review?** Yes, one for each visit. They can't review the same visit twice: that visit's link shows the review they already left. You can add more by hand with **New review**.
 
 **Why didn't the client get asked for a Google review?** Your Google review link must be saved in **Settings → Branding**, the client needs an email, and **Google review request** must be on. Check their **Google review status** panel too: it may say they clicked, opted out, or were marked reviewed.
 

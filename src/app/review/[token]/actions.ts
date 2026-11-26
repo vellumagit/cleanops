@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { notifyReviewSubmitted } from "@/lib/automations";
 import { reviewTokenIsFor } from "@/lib/review-token";
+import { existingReview } from "@/lib/review-dedup";
 
 type ReviewState = {
   success: boolean;
@@ -18,8 +19,8 @@ type ReviewState = {
  *   source="invoice"  — token is on invoices.review_token (invoice paid path)
  *
  * Either way the capability check is: token must match the row identified by
- * sourceId. Dedup is per-client per-org (a client leaves at most one review
- * regardless of how many tokens they receive).
+ * sourceId. One review per visit, whichever link it came through; an
+ * invoice with no visit takes one of its own (lib/review-dedup.ts).
  */
 export async function submitReviewAction(
   _prev: ReviewState,
@@ -56,6 +57,8 @@ export async function submitReviewAction(
   let clientId: string | null;
   let bookingId: string | null;
   let employeeId: string | null = null;
+  /** The invoice whose link this is: recorded, and what an invoice with no visit is counted by. */
+  const invoiceId = source === "invoice" ? sourceId : null;
 
   // Tokens expire after this window has elapsed since the underlying
   // event (booking date for booking-source; invoice paid_at for
@@ -161,27 +164,22 @@ export async function submitReviewAction(
     }
   }
 
-  // ── Dedup: one review per client per org ──────────────────────────────────
-  // Skip dedup when clientId is null — the previous `.eq("client_id", "")`
-  // searched for the empty-string literal which returns no rows and could
-  // hit a unique-constraint violation on insert if multiple null-client
-  // reviews exist for the same org. Better to allow the insert and let
-  // the (rare) tokens-with-no-client through.
-  let existing: { id: string } | null = null;
-  if (clientId) {
-    const { data } = await admin
-      .from("reviews")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("client_id", clientId)
-      .maybeSingle();
-    existing = (data as { id: string } | null) ?? null;
+  // ── Dedup: one review per visit (lib/review-dedup.ts) ─────────────────────
+  // An invoice with no visit takes one review of its own.
+  let existing: { id: string } | null;
+  try {
+    existing = await existingReview(admin, { organizationId, bookingId, invoiceId });
+  } catch (err) {
+    console.error("[review] dedup read failed:", err);
+    return { success: false, error: "Something went wrong. Please try again." };
   }
 
   if (existing) {
     return {
       success: false,
-      error: "You've already submitted a review. Thank you!",
+      error: bookingId
+        ? "You've already reviewed this clean. Thank you!"
+        : "You've already left a review for this invoice. Thank you!",
     };
   }
 
@@ -195,7 +193,10 @@ export async function submitReviewAction(
       employee_id: employeeId,
       rating,
       comment,
-    })
+      // Only from an invoice's link, so a visit's review saves even where
+      // migration 20261126010000 hasn't run yet.
+      ...(invoiceId ? { invoice_id: invoiceId } : {}),
+    } as never)
     .select("id")
     .single() as unknown as {
     data: { id: string } | null;

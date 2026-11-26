@@ -194,7 +194,7 @@ export function ClientForm({
             </label>
             <p className="text-xs text-muted-foreground">
               Skips the automated Google review request that would
-              otherwise go out 24 hours after their first job. They&apos;ll
+              otherwise go out 48 hours after their first job. They&apos;ll
               still get the regular per-job cleaning review email.
             </p>
           </div>

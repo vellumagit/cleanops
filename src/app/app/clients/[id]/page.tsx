@@ -1110,7 +1110,7 @@ function GbpReviewPanel({
           label: "Not asked yet",
           tone: "neutral" as const,
           detail:
-            "Will be asked 24h after their first completed booking. No action needed.",
+            "Will be asked 48 hours after their first completed booking. No action needed.",
         };
       case "pending":
         return {
