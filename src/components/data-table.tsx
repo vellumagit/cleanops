@@ -46,6 +46,14 @@ type Props<T> = {
   searchPlaceholder?: string;
   /** Turn search off entirely. */
   searchable?: boolean;
+  /**
+   * The search text, when the caller needs it too (invoices search further
+   * back on the server with it). Without these the table keeps its own.
+   */
+  query?: string;
+  onQueryChange?: (next: string) => void;
+  /** A line under the search box, e.g. "Looking through older invoices…". */
+  searchNote?: React.ReactNode;
   /** What to show when there are zero rows (before filtering). */
   emptyState?: {
     title: string;
@@ -76,8 +84,13 @@ export function DataTable<T>({
   emptyState,
   onRowClick,
   selection,
+  query: controlledQuery,
+  onQueryChange,
+  searchNote,
 }: Props<T>) {
-  const [query, setQuery] = useState("");
+  const [ownQuery, setOwnQuery] = useState("");
+  const query = controlledQuery ?? ownQuery;
+  const setQuery = onQueryChange ?? setOwnQuery;
   const searchRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
@@ -155,7 +168,7 @@ export function DataTable<T>({
 
   return (
     <div className="flex flex-col gap-3">
-      {searchable && data.length > 0 && (
+      {searchable && (data.length > 0 || query !== "") && (
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="relative flex-1 min-w-[220px]">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -186,6 +199,9 @@ export function DataTable<T>({
           </span>
         </div>
       )}
+      {searchable && searchNote ? (
+        <p className="-mt-1 text-xs text-muted-foreground">{searchNote}</p>
+      ) : null}
 
       {showEmptyState ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">

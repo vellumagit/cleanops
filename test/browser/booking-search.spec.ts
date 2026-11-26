@@ -1,11 +1,10 @@
 /**
  * Searching the bookings list for one client (2026-11-25).
  *
- * A company with a year of recurring visits booked ahead has more than a
- * thousand bookings from today on. The list searched only the newest 1,000
- * it had loaded, so a client's past visits were never among them, and a
- * search skipped the time tab altogether: Past with "Brian" typed showed his
- * upcoming visits, All showed nothing older, Today showed every day.
+ * A search skipped the time tab altogether: Past with "Brian" typed showed
+ * his upcoming visits, and his past ones sat behind "Show 50 more" (see
+ * src/lib/booking-search.ts for how). The list also searched only the rows
+ * it had loaded, which a company past 1,000 bookings would outgrow.
  *
  * Here: another client with 1,050 visits ahead and 1,050 in the last weeks,
  * and the client searched for with three visits long ago, one today and two

@@ -125,7 +125,7 @@ There are no credit notes in Sollos. To bill less, edit the invoice (or add a di
 
 The list opens on **To send**; the other tabs are **Awaiting payment**, **Paid**, **Void** and **All**. The search box takes invoice numbers (typing 149 finds INV-2026-0149), client names, dates ("Jul 6", "July 6" or "2026-07-06"), statuses ("overdue") and amounts ("183.75"). Words combine: "leslie july" narrows to that client's July invoices.
 
-The list shows the newest 500 invoices and says so when there are older ones; search only looks inside what's shown. For one client's complete history, open their page and use **View all** beside Recent invoices. Old paid and voided invoices leave the list once the **Auto-archive old records** automation archives them; **Show archived** brings them back.
+The list shows the newest 500 invoices and says so when there are older ones. Searching for a client's name or an invoice number then looks through all of them, however old, and adds what it finds; a search by date, status or amount looks only at the newest 500. For one client's complete history you can also open their page and use **View all** beside Recent invoices. Old paid and voided invoices leave the list once the **Auto-archive old records** automation archives them; **Show archived** brings them back.
 
 When a client has a company name on their profile, invoices, the PDF, the pay page and the invoice email are addressed to the company, with the person as *Attn*.
 

@@ -1,12 +1,16 @@
 /**
  * Searching the bookings list on the server.
  *
- * The list used to search only the rows it had already loaded: the newest
- * 1,000 bookings. A company with a year of recurring visits booked ahead
- * has more than 1,000 bookings from today on, so a client's past visits
- * were never among them, and searching "Brian" on Past or All showed only
- * what was coming (2026-11-25). Past and All now ask the database for the
- * matching bookings themselves, across the whole history.
+ * Searching "Brian" on Past or All showed only his upcoming visits
+ * (2026-11-25). Three things added up: a search skipped the time tab on
+ * purpose (since July), the mixed result put upcoming visits first (since
+ * September), and from 2026-11-21 the table drew 50 rows at a time. With 55
+ * visits ahead of him, his two past ones sat behind "Show 50 more". The
+ * commit that fixed it blamed the list's 1,000-row limit instead; neither
+ * company was near it (Svit 989 bookings, Velluma 511), so that was wrong.
+ * The tabs now apply to a search, and Past and All ask the database for the
+ * matching bookings themselves, across the whole history, so the limit
+ * can't hide any either once a company passes it.
  *
  * It matches what the table's own search box matches: the client's name,
  * the service as shown, the address, and the cleaner the job is assigned

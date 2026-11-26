@@ -5,11 +5,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { fetchOrgNotificationContext } from "@/app/app/clients/org-contact-default";
 import { getOrgTimezone } from "@/lib/org-timezone";
-import { invoiceDeliveryNote } from "@/lib/invoice-delivery-note";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { InvoicesTable, type InvoiceRow } from "./invoices-table";
+import { INVOICE_LIST_SELECT, toInvoiceRows, type RawInvoiceListRow } from "./invoice-rows";
 import { BulkInvoiceButton } from "./bulk-invoice-button";
 
 export const metadata = { title: "Invoices" };
@@ -33,21 +33,7 @@ export default async function InvoicesPage({
   const showArchived = archived === "1";
   const clientFilter = client?.trim() || null;
 
-  let query = supabase.from("invoices").select(
-    `
-        id,
-        number,
-        status,
-        amount_cents,
-        due_date,
-        sent_at,
-        paid_at,
-        created_at,
-        auto_send_state,
-        auto_send_at,
-        client:clients ( name, email, contact_preference, contact_overrides, sms_opted_in )
-      ` as never,
-  );
+  let query = supabase.from("invoices").select(INVOICE_LIST_SELECT as never);
 
   // Explicit org scope — a two-org admin reads both orgs via RLS alone.
   query = query.eq("organization_id" as never, membership.organization_id as never);
@@ -64,30 +50,14 @@ export default async function InvoicesPage({
   // overdue invoices from June/July fell off the newest-N window and the
   // client-side search box swore she only had three invoices — while the
   // booking picker (correctly) showed her July job as already billed.
-  // A search over a truncated list must say so, or it's testimony.
+  // A search over a truncated list must say so, or it's testimony. Since
+  // 2026-11-25 a search on a full list also looks further back, by client
+  // name and invoice number (lib/invoice-search.ts).
   const LIST_LIMIT = 500;
   const { data, error } = (await query
     .order("created_at", { ascending: false })
     .limit(LIST_LIMIT)) as unknown as {
-    data: Array<{
-      id: string;
-      number: string | null;
-      status: InvoiceRow["status"];
-      amount_cents: number;
-      due_date: string | null;
-      sent_at: string | null;
-      paid_at: string | null;
-      created_at: string;
-      auto_send_state: string | null;
-      auto_send_at: string | null;
-      client: {
-        name: string | null;
-        email: string | null;
-        contact_preference: string | null;
-        contact_overrides: Record<string, unknown> | null;
-        sms_opted_in: boolean | null;
-      } | null;
-    }> | null;
+    data: RawInvoiceListRow[] | null;
     error: { message: string } | null;
   };
 
@@ -100,27 +70,8 @@ export default async function InvoicesPage({
   const { orgDefault, smsEnabled } = await notifCtxPromise;
   const orgTz = await tzPromise;
 
-  const rows: InvoiceRow[] = (data ?? []).map((i) => ({
-    id: i.id,
-    number: i.number,
-    status: i.status,
-    amount_cents: i.amount_cents,
-    due_date: i.due_date,
-    sent_at: i.sent_at,
-    paid_at: i.paid_at,
-    created_at: i.created_at,
-    client_name: i.client?.name ?? "—",
-    delivery: invoiceDeliveryNote({
-      autoSendState: i.auto_send_state,
-      autoSendAt: i.auto_send_at,
-      timezone: orgTz,
-      status: i.status,
-      amountCents: i.amount_cents,
-      client: i.client,
-      orgDefault,
-      smsEnabled,
-    }),
-  }));
+  const rows: InvoiceRow[] = toInvoiceRows(data ?? [], { timezone: orgTz, orgDefault, smsEnabled });
+  const truncated = rows.length >= LIST_LIMIT;
 
   // Skipped = a miss the owner should act on. Held = paused (possibly the
   // owner's own Hold button) — mentioned, never alarmed.
@@ -194,17 +145,20 @@ export default async function InvoicesPage({
           </Link>
         </div>
       )}
-      {rows.length >= LIST_LIMIT && (
+      {truncated && (
         <div className="mb-3 rounded-lg border border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
-          Showing the newest {LIST_LIMIT} invoices — older ones exist, and the
-          search box only looks inside what&apos;s shown. For one client&apos;s
-          complete history, open their page and use{" "}
-          <span className="font-medium">View all</span> beside Recent invoices.
+          Showing the newest {LIST_LIMIT} invoices; older ones exist. Searching
+          for a client&apos;s name or an invoice number looks through all of
+          them. A search by date, amount or status looks only at the newest{" "}
+          {LIST_LIMIT}.
         </div>
       )}
       <InvoicesTable
         tz={orgTz}
         rows={rows}
+        truncated={truncated}
+        archived={showArchived}
+        clientId={clientFilter}
         canEdit={canEdit && !showArchived}
         canOpen={!showArchived}
         currency={currency}

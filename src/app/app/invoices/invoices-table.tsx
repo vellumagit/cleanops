@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { bulkVoidInvoicesAction } from "./actions";
+import { searchAllInvoicesAction } from "./search-actions";
+import { searchTokens, withOlder, OLDER_MATCH_LIMIT } from "@/lib/invoice-search";
 import { cn } from "@/lib/utils";
 import { useUrlState } from "@/components/use-url-state";
 import { useReturnTo } from "@/components/return-to-field";
@@ -137,8 +139,16 @@ export function InvoicesTable({
   canOpen,
   currency,
   tz,
+  truncated = false,
+  archived = false,
+  clientId = null,
 }: {
   rows: InvoiceRow[];
+  /** The page holds only the newest invoices: a search also looks further back. */
+  truncated?: boolean;
+  /** The page's archive and client filters, which the search further back keeps. */
+  archived?: boolean;
+  clientId?: string | null;
   /** Owner or admin: may tick rows and void them. */
   canEdit: boolean;
   /** Anyone who reached this page may open an invoice. A manager with the
@@ -172,10 +182,61 @@ export function InvoicesTable({
     return counts;
   }, [rows]);
 
+  // The search box. When the page holds only the newest invoices, what's
+  // typed also goes to the server, which looks through every invoice for a
+  // client name or number containing those words (lib/invoice-search.ts);
+  // what it finds joins the rows, and the tab and the table's own search
+  // narrow them like any other.
+  const [query, setQuery] = useUrlState<string>("q", "");
+  const wanted = truncated ? searchTokens(query).join(" ") : "";
+  const [older, setOlder] = useState<{ key: string; rows: InvoiceRow[]; more: boolean; failed: boolean }>({
+    key: "",
+    rows: [],
+    more: false,
+    failed: false,
+  });
+  const [lookingBack, setLookingBack] = useState(false);
+  const asked = useRef(0);
+  useEffect(() => {
+    if (!wanted) return;
+    const n = ++asked.current;
+    const timer = setTimeout(() => {
+      setLookingBack(true);
+      searchAllInvoicesAction({ needle: wanted, archived, clientId })
+        .then((res) => {
+          if (n !== asked.current) return;
+          setOlder(
+            res.ok
+              ? { key: wanted, rows: res.rows, more: res.more, failed: false }
+              : { key: wanted, rows: [], more: false, failed: true },
+          );
+        })
+        .catch(() => {
+          if (n === asked.current) setOlder({ key: wanted, rows: [], more: false, failed: true });
+        })
+        .finally(() => {
+          if (n === asked.current) setLookingBack(false);
+        });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [wanted, archived, clientId]);
+  const olderNow = wanted && older.key === wanted ? older : null;
+  const pool = useMemo(() => (olderNow ? withOlder(rows, olderNow.rows) : rows), [rows, olderNow]);
+
   const visibleRows = useMemo(
-    () => (tab === "all" ? rows : rows.filter((r) => tabFor(r.status) === tab)),
-    [rows, tab],
+    () => (tab === "all" ? pool : pool.filter((r) => tabFor(r.status) === tab)),
+    [pool, tab],
   );
+
+  const searchNote = !wanted
+    ? null
+    : lookingBack || !olderNow
+      ? "Looking through older invoices too…"
+      : olderNow.failed
+        ? "Couldn't look through older invoices. Only the newest are searched."
+        : olderNow.more
+          ? `Older invoices searched too. More than ${OLDER_MATCH_LIMIT} match: type more to narrow it.`
+          : "Older invoices searched too.";
 
   // Quick void. Selection is per tab: switching tabs clears it, so nothing
   // selected on one tab can be voided from another where it isn't visible.
@@ -402,6 +463,9 @@ export function InvoicesTable({
         columns={columns}
         getRowId={(r) => r.id}
         searchPlaceholder="Search client, invoice #, date, status, amount…"
+        query={query}
+        onQueryChange={setQuery}
+        searchNote={searchNote}
         onRowClick={
           canOpen
             ? (r) => router.push(withReturn(`/app/invoices/${r.id}`))
