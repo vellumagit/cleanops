@@ -299,6 +299,104 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
     expect((await s.amandaVisits()).length).toBe(before + 1);
   });
 
+  // The press is only as good as the agreement between the app, which names
+  // the clashes and makes the key, and the database, which refuses. Svit
+  // shares a job's hours across its crew: two people on a four-hour job are
+  // each there two hours. If the two ever read that differently, the office
+  // gets a refusal with no names and no button, or a button that can't work.
+  it("with the crew's hours shared, as at Svit: only a real overlap asks, and Book anyway saves it", async () => {
+    const s = await setUp();
+    await api.sql(
+      `update public.organizations set automations_enabled = true,
+              automation_settings = '{"divide_crew_hours": {"enabled": true}}'::jsonb where id = $1`,
+      [s.org],
+    );
+    // Leslie's 9-to-2 job is two people, so each is there 9 to 11:30.
+    // Amanda's at 12 for four hours is noon to 2 each: clear of it.
+    const clear = await s.press(s.owner, () => bookings.createBookingAction({}, s.formFor([s.olha, s.vira], {}, 12)));
+    expect(clear, api.log()).toMatchObject({ redirected: expect.any(String) });
+    const [visit] = await s.amandaVisits();
+
+    // Moved to 10: 10 to noon each, into Leslie's 9 to 11:30.
+    const first = asked(
+      await s.press(s.owner, () => bookings.updateBookingAction(visit.id, {}, s.formFor([s.olha, s.vira], {}, 10))),
+    );
+    expect(first.errors?._form, api.log()).toContain("press Book anyway");
+    expect(first.values?.confirm_overlap).toBe(
+      [`${s.olha.membershipId}:${s.busy}`, `${s.vira.membershipId}:${s.busy}`].sort().join(","),
+    );
+    expect((await s.visit(visit.id)).at.slice(11), "not moved yet").toBe("12:00");
+
+    const saved = await s.press(s.owner, () =>
+      bookings.updateBookingAction(
+        visit.id,
+        {},
+        s.formFor([s.olha, s.vira], { confirm_overlap: first.values!.confirm_overlap }, 10),
+      ),
+    );
+    expect(saved, api.log()).toMatchObject({ redirected: expect.any(String) });
+    expect((await s.visit(visit.id)).at.slice(11)).toBe("10:00");
+  });
+
+  // A split shift gives each person their own hours on the visit. The
+  // question is about those hours, not the whole visit.
+  it("a split shift: only the person whose own hours overlap is named, and Book anyway keeps the split", async () => {
+    const s = await setUp();
+    const day = s.day + 1;
+    // Vira is on another job 10 to 11.
+    const [other] = await api.sql<{ id: string }>(
+      "insert into public.clients (organization_id, name) values ($1, 'Brent Bissell') returning id",
+      [s.org],
+    );
+    const busy = await addBooking(api.sql, s.org, other.id, { scheduledAt: at(day, 10), durationMinutes: 60, status: "confirmed" });
+    await api.sql(
+      "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary) values ($1, $2, $3, true)",
+      [s.org, busy, s.vira.membershipId],
+    );
+    await api.sql("update public.bookings set assigned_to = $2 where id = $1", [busy, s.vira.membershipId]);
+
+    const split = (segments: Array<[Member, number, number]>, extra: Record<string, string> = {}) =>
+      s.formFor([segments[0][0]], {
+        scheduled_at: at(day, 10).slice(0, 16),
+        splits: JSON.stringify(
+          segments.map(([m, offset, minutes]) => ({
+            assigned_to: m.membershipId,
+            start_offset_minutes: offset,
+            duration_minutes: minutes,
+          })),
+        ),
+        ...extra,
+      });
+    // Olha 10 to noon, Vira noon to 2: Vira's own hours are clear of her
+    // 10-to-11 job, though the visit as a whole is not.
+    const clear = await s.press(s.owner, () =>
+      bookings.createBookingAction({}, split([[s.olha, 0, 120], [s.vira, 120, 120]])),
+    );
+    expect(clear, api.log()).toMatchObject({ redirected: expect.any(String) });
+    const [visit] = await s.amandaVisits();
+
+    // Vira from 10:30 instead: into her other job. Olha is not named.
+    const later: Array<[Member, number, number]> = [[s.olha, 0, 30], [s.vira, 30, 210]];
+    const first = asked(await s.press(s.owner, () => bookings.updateBookingAction(visit.id, {}, split(later))));
+    expect(first.errors?._form, api.log()).toMatch(/Vira \d+ is already booked then: Brent Bissell/);
+    expect(first.errors?._form).not.toMatch(/Olha/);
+    expect(first.values?.confirm_overlap).toBe(`${s.vira.membershipId}:${busy}`);
+
+    const saved = await s.press(s.owner, () =>
+      bookings.updateBookingAction(visit.id, {}, split(later, { confirm_overlap: first.values!.confirm_overlap })),
+    );
+    expect(saved, api.log()).toMatchObject({ redirected: expect.any(String) });
+    const rows = await api.sql<{ membership_id: string; off: number; dur: number }>(
+      `select membership_id, split_start_offset_minutes as off, split_duration_minutes as dur
+         from public.booking_assignees where booking_id = $1 order by split_start_offset_minutes`,
+      [visit.id],
+    );
+    expect(rows).toEqual([
+      { membership_id: s.olha.membershipId, off: 0, dur: 30 },
+      { membership_id: s.vira.membershipId, off: 30, dur: 210 },
+    ]);
+  });
+
   it("a key for one crew is not a yes for another", async () => {
     const s = await setUp();
     const first = asked(await s.press(s.owner, () => bookings.createBookingAction({}, s.formFor([s.olha]))));
