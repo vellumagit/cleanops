@@ -220,6 +220,85 @@ describe.skipIf(!hasPostgrest)("Book anyway", () => {
     expect(again, api.log()).toMatchObject({ redirected: expect.any(String) });
   });
 
+  // Svitlana, 2026-11-26: Carmen North's visit two days before, already
+  // Completed, ran 45 minutes over into Veronika's next job. Lengthening it
+  // was refused, she pressed Book anyway, and it refused again, over and
+  // over: the press was ignored for a Completed visit, while the database
+  // still counts a finished visit's overlaps. She moved the start time
+  // earlier to get it saved.
+  it("a Completed visit made longer into the next job: Book anyway saves it", async () => {
+    const s = await setUp();
+    const past = -2;
+    const [bissell] = await api.sql<{ id: string }>(
+      "insert into public.clients (organization_id, name) values ($1, 'Louise Bissell') returning id",
+      [s.org],
+    );
+    // Olha's next job that day, 12 to 3.
+    const next = await addBooking(api.sql, s.org, bissell.id, {
+      scheduledAt: at(past, 12),
+      durationMinutes: 180,
+      status: "completed",
+    });
+    await api.sql(
+      "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary) values ($1, $2, $3, true)",
+      [s.org, next, s.olha.membershipId],
+    );
+    await api.sql("update public.bookings set assigned_to = $2 where id = $1", [next, s.olha.membershipId]);
+    // 8 to 12, done and closed, Olha on it. Closed, as a finished visit is
+    // (by the office, or by the crew's clock): an open one with nobody
+    // clocked in reads as not started, and any save puts it back to
+    // Confirmed (job-sync.ts).
+    const id = await s.amandaVisit(8, [s.olha], past);
+    await api.sql("update public.bookings set status = 'completed', closed_at = now() where id = $1", [id]);
+
+    const longer = (extra: Record<string, string> = {}) =>
+      s.formFor([s.olha], {
+        scheduled_at: at(past, 8).slice(0, 16),
+        duration_minutes: "285",
+        status: "completed",
+        ...extra,
+      });
+    const first = asked(await s.press(s.owner, () => bookings.updateBookingAction(id, {}, longer())));
+    expect(first.errors?._form, api.log()).toMatch(/Olha \d+ is already booked then/);
+    expect(first.errors?._form).toContain("press Book anyway");
+    const key = first.values?.confirm_overlap;
+    expect(key).toBe(`${s.olha.membershipId}:${next}`);
+
+    const saved = await s.press(s.owner, () =>
+      bookings.updateBookingAction(id, {}, longer({ confirm_overlap: key! })),
+    );
+    expect(saved, api.log()).toMatchObject({ redirected: expect.any(String) });
+    const [row] = await api.sql<{ minutes: number; status: string; at: string }>(
+      `select duration_minutes as minutes, status,
+              to_char(scheduled_at at time zone 'UTC', 'HH24:MI') as at
+         from public.bookings where id = $1`,
+      [id],
+    );
+    expect(row).toEqual({ minutes: 285, status: "completed", at: "08:00" });
+    expect((await s.visit(id)).crew).toEqual([s.olha.membershipId]);
+  });
+
+  it("a Completed visit entered afterwards over another job: Book anyway saves it", async () => {
+    const s = await setUp();
+    const past = -2;
+    const other = await s.amandaVisit(9, [s.olha], past);
+    await api.sql("update public.bookings set status = 'completed', closed_at = now() where id = $1", [other]);
+    const before = (await s.amandaVisits()).length;
+
+    const entered = (extra: Record<string, string> = {}) =>
+      s.formFor([s.olha], { scheduled_at: at(past, 11).slice(0, 16), status: "completed", ...extra });
+    const first = asked(await s.press(s.owner, () => bookings.createBookingAction({}, entered())));
+    expect(first.errors?._form, api.log()).toContain("press Book anyway");
+    expect(first.values?.confirm_overlap).toBe(`${s.olha.membershipId}:${other}`);
+    expect((await s.amandaVisits()).length, "nothing saved yet").toBe(before);
+
+    const saved = await s.press(s.owner, () =>
+      bookings.createBookingAction({}, entered({ confirm_overlap: first.values!.confirm_overlap })),
+    );
+    expect(saved, api.log()).toMatchObject({ redirected: expect.any(String) });
+    expect((await s.amandaVisits()).length).toBe(before + 1);
+  });
+
   it("a key for one crew is not a yes for another", async () => {
     const s = await setUp();
     const first = asked(await s.press(s.owner, () => bookings.createBookingAction({}, s.formFor([s.olha]))));

@@ -1247,7 +1247,10 @@ export async function createBookingAction(
   // Then the row goes in with nobody on it, and the whole crew goes on in
   // the crew save with the overlap allowed: the row's own check would
   // otherwise refuse the lead before the crew save could say "allow".
-  const kept = ["cancelled", "completed"].includes(parsed.data.status)
+  // A Completed visit too: the database counts a finished job's overlaps
+  // (only a cancelled one is left out), so one entered afterwards can be
+  // refused and must be able to take the press (2026-11-26).
+  const kept = parsed.data.status === "cancelled"
     ? null
     : await approvedClashes(
         membership.organization_id,
@@ -2323,8 +2326,13 @@ export async function updateBookingAction(
 
   // Pressed "Book anyway" on a refusal of this one visit, and the clashes
   // are still those? Then it saves with the overlap in it.
+  // Completed visits included. Leaving them out offered the button and
+  // then ignored it: the database still refuses a finished visit made
+  // longer into the next job, and Svitlana was refused five times in a row
+  // on 2026-11-26 recording Carmen North's visit that ran 45 minutes over.
+  // A cancelled visit's overlaps are never counted, so it is never asked.
   const keptClashes =
-    isSeriesPropagation || ["cancelled", "completed"].includes(parsed.data.status)
+    isSeriesPropagation || parsed.data.status === "cancelled"
       ? null
       : await approvedClashes(
           membership.organization_id,
