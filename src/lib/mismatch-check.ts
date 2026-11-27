@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hasNoAddress, samePlace } from "./address-match";
+import { resolveAutomationEnabled } from "./automation-defaults";
 import { proposedWindows, type ProposedVisit } from "./crew-clash-text";
 
 /**
@@ -338,19 +339,22 @@ export async function loadMismatches(
   });
 
   // Double-bookings. Does the company share a job's hours across its crew?
-  // Read the way the database's booking_shares_hours does, so the times here
-  // are the overlap guard's.
+  // Read as every other reader does, and as the database's
+  // booking_shares_hours does (test/db/twins.test.ts holds the two to one
+  // answer), so the times here are the overlap guard's. This one also
+  // required automations to be on until 2026-11-27: the guard stopped
+  // asking that on 2026-11-10, and with automations paused this listed
+  // pairs the guard and every booking screen called fine.
   const { data: org, error: oErr } = (await db
     .from("organizations")
-    .select("automations_enabled, automation_settings")
+    .select("automation_settings")
     .eq("id", orgId)
     .maybeSingle()) as unknown as {
-    data: { automations_enabled: boolean | null; automation_settings: Record<string, { enabled?: unknown } | undefined> | null } | null;
+    data: { automation_settings: Record<string, { enabled?: boolean } | undefined> | null } | null;
     error: { message: string } | null;
   };
   note("company settings", oErr);
-  const enabled = org?.automation_settings?.divide_crew_hours?.enabled;
-  const orgShares = org?.automations_enabled === true && (enabled === true || enabled === "true");
+  const orgShares = resolveAutomationEnabled(org?.automation_settings ?? null, "divide_crew_hours");
   // Only visits near enough to matter; the day after the horizon is included
   // so a job that starts inside it is compared with whatever it runs into.
   const until = nowMs + (DOUBLE_BOOKED_WITHIN_DAYS + 1) * 86_400_000;

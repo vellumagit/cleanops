@@ -144,6 +144,44 @@ describe.skipIf(!hasPostgrest)("things that don't add up", () => {
     expect(found[0].client).toBe("Olha Musnytska: Leslie Saumer and Amanda SJ");
   });
 
+  // The report's times are the overlap guard's, and the guard reads "divide
+  // crew hours" on its own, automations paused or not (migration
+  // 20261110020000). The report also required automations to be on, so a
+  // company with them paused got double-bookings listed that the guard, and
+  // every booking screen, called fine.
+  it("with automations paused and the crew's hours shared, a pair the guard allows is not listed", async () => {
+    const org = await addOrg(api.sql, "Paused");
+    await api.sql(
+      `update public.organizations set automations_enabled = false,
+              automation_settings = '{"divide_crew_hours": {"enabled": true}}'::jsonb where id = $1`,
+      [org],
+    );
+    const olha = await addMember(api.sql, org, "employee", "Olha");
+    const vira = await addMember(api.sql, org, "employee", "Vira");
+    const leslie = await clientNamed(org, "Leslie Saumer", "1 First Street");
+    const amanda = await clientNamed(org, "Amanda SJ", "2 Second Street");
+    // Two hours, two people: an hour each.
+    const first = await visit(org, leslie, { inDays: 4, address: "1 First Street", crew: [olha, vira] });
+    const [{ at: firstAt }] = await api.sql<{ at: string }>("select scheduled_at as at from public.bookings where id = $1", [first]);
+    // Olha's next job an hour and a quarter in: clear of her hour. The
+    // guard lets it in, which says the same.
+    const second = await addBooking(api.sql, org, amanda, {
+      scheduledAt: new Date(new Date(firstAt).getTime() + 75 * 60_000).toISOString(),
+      durationMinutes: 120,
+      status: "confirmed",
+    });
+    await api.sql("update public.bookings set address = '2 Second Street', assigned_to = $2 where id = $1", [second, olha.membershipId]);
+    await api.sql(
+      "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary) values ($1, $2, $3, true)",
+      [org, second, olha.membershipId],
+    );
+
+    const { loadMismatches } = await import("@/lib/mismatch-check");
+    const { found, errors } = await loadMismatches(await admin(), org, Date.now());
+    expect(errors).toEqual([]);
+    expect(found.filter((m) => m.kind === "double_booked")).toEqual([]);
+  });
+
   it("another company's visits are not in this company's list", async () => {
     const mine = await addOrg(api.sql, "Mine");
     const theirs = await addOrg(api.sql, "Theirs");
