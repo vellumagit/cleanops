@@ -68,6 +68,7 @@ export default function PricingPage() {
               {[
                 "All features, zero restrictions",
                 "Unlimited clients and jobs",
+                "Bulk client import from CSV",
                 "Unlimited invoices",
                 "Team chat and clock-in",
                 "Subcontractor bench SMS",
@@ -170,7 +171,6 @@ export default function PricingPage() {
                 "Onboarding call included",
                 "Advanced reports and exports",
                 "Custom branding on invoices",
-                "Bulk client import from CSV",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2 text-muted-foreground">
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -241,6 +241,18 @@ export default function PricingPage() {
             </Link>
           </div>
         </div>
+
+        <p className="mx-auto mt-8 max-w-2xl text-center text-sm text-muted-foreground">
+          <strong className="text-foreground">Switching from Jobber or another tool?</strong>{" "}
+          Every plan can import your client list from a CSV. Or email your export to{" "}
+          <a
+            href="mailto:support@sollos3.com?subject=Import%20my%20clients"
+            className="font-medium text-foreground underline underline-offset-4"
+          >
+            support@sollos3.com
+          </a>{" "}
+          and we&apos;ll import it for you during your trial, free.
+        </p>
       </section>
 
       {/* Comparison table */}
@@ -369,10 +381,10 @@ const COMPARISON_ROWS: Array<{
   { feature: "Subcontractor bench SMS", starter: true, team: true, growth: true, enterprise: true },
   { feature: "Google Calendar sync", starter: true, team: true, growth: true, enterprise: true },
   { feature: "Client records and history", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Bulk client import (CSV)", starter: true, team: true, growth: true, enterprise: true },
   { feature: "Estimates and quotes", starter: true, team: true, growth: true, enterprise: true },
   { feature: "Payroll reports", starter: true, team: true, growth: true, enterprise: true },
   { feature: "Custom branding on invoices", starter: false, team: false, growth: true, enterprise: true },
-  { feature: "Bulk client import (CSV)", starter: false, team: false, growth: true, enterprise: true },
   { feature: "Advanced reports and exports", starter: false, team: false, growth: true, enterprise: true },
   { feature: "Onboarding call", starter: false, team: false, growth: true, enterprise: true },
   { feature: "Email support", starter: true, team: true, growth: "Priority", enterprise: "Priority" },
@@ -387,6 +399,10 @@ const FAQS = [
   {
     q: "Do I need a credit card to start my trial?",
     a: "No. You can start your 14-day free trial with just your email and company name. We'll only ask for a card when you pick a plan at the end of the trial.",
+  },
+  {
+    q: "Can I bring my clients over from Jobber or another tool?",
+    a: "Yes, on every plan. Export your client list from Jobber, Housecall Pro or a spreadsheet as a CSV and import it from the Clients page. Or email the export to support@sollos3.com and we'll import it for you during your trial, at no charge.",
   },
   {
     q: "What happens when my trial ends?",

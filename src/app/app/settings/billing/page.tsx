@@ -50,6 +50,7 @@ const PLANS: PlanDef[] = [
     features: [
       "All features, zero restrictions",
       "Unlimited clients and jobs",
+      "Bulk client import from CSV",
       "Unlimited invoices",
       "Team chat and clock-in",
       "On-call pool SMS offers",
@@ -86,7 +87,6 @@ const PLANS: PlanDef[] = [
       "Onboarding call included",
       "Advanced reports and exports",
       "Custom branding on invoices",
-      "Bulk client import from CSV",
     ],
   },
   {
