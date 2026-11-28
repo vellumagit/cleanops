@@ -7,6 +7,7 @@ import { JsonLd } from "@/components/json-ld";
 import { MarketingFooter, MarketingHeader } from "@/components/marketing-chrome";
 import { getHelpArticle } from "@/content/help";
 import { LANDING_PAGES, type LandingPageContent } from "@/content/landing";
+import { COMPARE_PAGES } from "@/content/compare";
 import {
   breadcrumbJsonLd,
   faqPageJsonLd,
@@ -19,7 +20,9 @@ import {
  * lives here, so four pages can't drift into four designs.
  */
 
-export function landingMetadata(page: LandingPageContent): Metadata {
+export function landingMetadata(
+  page: Pick<LandingPageContent, "slug" | "metaTitle" | "metaDescription">,
+): Metadata {
   return {
     title: page.metaTitle,
     description: page.metaDescription,
@@ -179,7 +182,7 @@ export function LandingPage({ page }: { page: LandingPageContent }) {
           Also on Sollos 3
         </p>
         <ul className="mt-3 flex flex-wrap justify-center gap-2">
-          {others.map((o) => (
+          {[...others, ...COMPARE_PAGES].map((o) => (
             <li key={o.slug}>
               <Link
                 href={`/${o.slug}`}
@@ -205,7 +208,7 @@ export function LandingPage({ page }: { page: LandingPageContent }) {
   );
 }
 
-function CtaButtons({ className }: { className?: string }) {
+export function CtaButtons({ className }: { className?: string }) {
   return (
     <div className={cn("flex flex-wrap items-center justify-center gap-3", className)}>
       <Link

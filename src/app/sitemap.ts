@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { HELP_ARTICLES } from "@/content/help";
 import { LANDING_PAGES } from "@/content/landing";
+import { COMPARE_PAGES } from "@/content/compare";
 import { SITE_URL } from "@/lib/seo";
 import { listPublishedPosts } from "@/lib/blog";
 
@@ -27,6 +28,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...LANDING_PAGES.map((l) => ({
       path: `/${l.slug}`,
       priority: 0.9,
+      changeFrequency: "monthly" as const,
+    })),
+    ...COMPARE_PAGES.map((c) => ({
+      path: `/${c.slug}`,
+      priority: 0.8,
       changeFrequency: "monthly" as const,
     })),
     { path: "/help", priority: 0.7, changeFrequency: "weekly" },

@@ -4,6 +4,7 @@ import { ArrowRight } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LANDING_PAGES } from "@/content/landing";
+import { COMPARE_PAGES } from "@/content/compare";
 import { MobileMenu } from "@/components/marketing/mobile-menu";
 
 /**
@@ -115,7 +116,7 @@ export function MarketingFooter() {
 
           {/* One landing page per kind of cleaning business */}
           <FooterColumn title="Solutions">
-            {LANDING_PAGES.map((l) => (
+            {[...LANDING_PAGES, ...COMPARE_PAGES].map((l) => (
               <FooterLink key={l.slug} href={`/${l.slug}`}>
                 {l.navLabel}
               </FooterLink>
